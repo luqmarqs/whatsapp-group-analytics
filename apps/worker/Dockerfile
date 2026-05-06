@@ -3,7 +3,7 @@ WORKDIR /app
 # native deps for Baileys (libvips etc. not needed — baileys uses pure JS)
 RUN apk add --no-cache python3 make g++
 COPY package*.json ./
-RUN npm ci
+RUN npm install
 COPY . .
 RUN npm run build
 
@@ -12,7 +12,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 RUN apk add --no-cache python3 make g++
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm install --omit=dev
 COPY --from=builder /app/dist ./dist
 VOLUME ["/app/sessions"]
 CMD ["node", "dist/index.js"]
