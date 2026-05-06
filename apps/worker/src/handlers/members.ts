@@ -2,12 +2,10 @@ import pool from '../db'
 import redis from '../redis'
 import { hashJid } from '../utils/hash'
 
-type ParticipantAction = 'add' | 'remove' | 'promote' | 'demote'
-
 export async function handleParticipantUpdate(
   groupJid: string,
   participants: string[],
-  action: ParticipantAction,
+  action: string,
   actor?: string,
 ) {
   const { rows } = await pool.query(

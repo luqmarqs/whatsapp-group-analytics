@@ -44,13 +44,13 @@ function hasMedia(msg: WAMessage): boolean {
 function approximateSize(msg: WAMessage): number | null {
   const m = msg.message
   if (!m) return null
-  return (
+  const len =
     m.imageMessage?.fileLength ??
     m.videoMessage?.fileLength ??
     m.audioMessage?.fileLength ??
     m.documentMessage?.fileLength ??
     null
-  )
+  return len != null ? Number(len) : null
 }
 
 export async function handleMessage(msg: WAMessage, groupJid: string) {

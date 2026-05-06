@@ -141,8 +141,8 @@ export async function startWhatsApp() {
   })
 
   // ── Participant changes ────────────────────────────────────────────────────
-  sock.ev.on('group-participants.update', async ({ id, participants, action, actor }) => {
-    await handleParticipantUpdate(id, participants, action, actor).catch((err) =>
+  sock.ev.on('group-participants.update', async ({ id, participants, action, author }) => {
+    await handleParticipantUpdate(id, participants, action, author).catch((err) =>
       console.error('[wa] participant handler error', err),
     )
   })
