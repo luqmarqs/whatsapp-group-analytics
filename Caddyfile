@@ -1,0 +1,27 @@
+{$DOMAIN} {
+  # API — strip /api prefix before forwarding
+  @api path /api/*
+  handle @api {
+    uri strip_prefix /api
+    reverse_proxy api:3001
+  }
+
+  # Frontend (React SPA served by nginx)
+  handle {
+    reverse_proxy web:80
+  }
+
+  # Security headers
+  header {
+    X-Frame-Options "SAMEORIGIN"
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "strict-origin-when-cross-origin"
+    -Server
+  }
+
+  encode gzip
+  log {
+    output stderr
+    level INFO
+  }
+}

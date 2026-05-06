@@ -1,0 +1,120 @@
+import { proto } from '@whiskeysockets/baileys'
+import pool from '../db'
+import redis from '../redis'
+import { hashJid } from '../utils/hash'
+import { extractLinks } from '../utils/links'
+
+const STORE_BODY = process.env.STORE_MESSAGE_BODY === 'true'
+
+type WAMessage = proto.IWebMessageInfo
+
+function getMessageText(msg: WAMessage): string | null {
+  const m = msg.message
+  if (!m) return null
+
+  return (
+    m.conversation ??
+    m.extendedTextMessage?.text ??
+    m.imageMessage?.caption ??
+    m.videoMessage?.caption ??
+    m.documentMessage?.caption ??
+    null
+  )
+}
+
+function getMessageType(msg: WAMessage): string {
+  const m = msg.message
+  if (!m) return 'unknown'
+  const keys = Object.keys(m).filter((k) => k !== 'messageContextInfo')
+  return keys[0] ?? 'unknown'
+}
+
+function hasMedia(msg: WAMessage): boolean {
+  const m = msg.message
+  if (!m) return false
+  return !!(
+    m.imageMessage ||
+    m.videoMessage ||
+    m.audioMessage ||
+    m.documentMessage ||
+    m.stickerMessage
+  )
+}
+
+function approximateSize(msg: WAMessage): number | null {
+  const m = msg.message
+  if (!m) return null
+  return (
+    m.imageMessage?.fileLength ??
+    m.videoMessage?.fileLength ??
+    m.audioMessage?.fileLength ??
+    m.documentMessage?.fileLength ??
+    null
+  )
+}
+
+export async function handleMessage(msg: WAMessage, groupJid: string) {
+  const messageId = msg.key.id
+  if (!messageId) return
+
+  // Redis deduplication — prevents duplicate saves on reconnect
+  const dedupKey = `msg:${messageId}`
+  const fresh = await redis.set(dedupKey, '1', 'EX', 86_400, 'NX')
+  if (!fresh) return
+
+  const { rows } = await pool.query(
+    'SELECT id FROM whatsapp_groups WHERE group_jid = $1',
+    [groupJid],
+  )
+  if (!rows[0]) return
+
+  const groupId = rows[0].id
+  const senderJid = msg.key.participant ?? msg.participant ?? ''
+  const senderHash = hashJid(senderJid)
+  const timestamp = new Date((msg.messageTimestamp as number) * 1000)
+  const msgType = getMessageType(msg)
+  const media = hasMedia(msg)
+  const text = getMessageText(msg)
+  const links = text ? extractLinks(text) : []
+  const hasLink = links.length > 0
+  const approxSize = approximateSize(msg)
+
+  // Attempt to save message — skip on duplicate message_id (race condition)
+  try {
+    await pool.query(
+      `INSERT INTO whatsapp_messages
+         (message_id, group_id, sender_hash, timestamp, message_type,
+          has_link, has_media, approximate_size, message_body)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       ON CONFLICT (message_id) DO NOTHING`,
+      [
+        messageId,
+        groupId,
+        senderHash,
+        timestamp,
+        msgType,
+        hasLink,
+        media,
+        approxSize ? Number(approxSize) : null,
+        STORE_BODY ? text : null,
+      ],
+    )
+  } catch {
+    return
+  }
+
+  // Save extracted links
+  if (links.length > 0) {
+    for (const link of links) {
+      await pool.query(
+        `INSERT INTO whatsapp_links (group_id, url_hash, domain, first_seen_at, last_seen_at, count)
+         VALUES ($1,$2,$3,$4,$4,1)
+         ON CONFLICT (group_id, url_hash) DO UPDATE SET
+           last_seen_at = EXCLUDED.last_seen_at,
+           count        = whatsapp_links.count + 1,
+           updated_at   = NOW()`,
+        [groupId, link.urlHash, link.domain, timestamp],
+      )
+    }
+  }
+}
