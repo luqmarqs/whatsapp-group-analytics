@@ -133,6 +133,32 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
     }
   })
 
+  // ─── Group members ────────────────────────────────────────────────────────
+  fastify.get('/groups/:id/members', { preHandler: authenticate }, async (request, _reply) => {
+    const { id } = request.params as { id: string }
+    const { active } = request.query as { active?: string }
+
+    const { rows } = await pool.query(`
+      SELECT
+        m.id,
+        m.role,
+        m.is_active,
+        m.joined_at,
+        m.left_at,
+        c.phone,
+        c.name,
+        c.updated_at AS contact_updated_at
+      FROM whatsapp_group_members m
+      LEFT JOIN whatsapp_contacts c ON c.member_hash = m.member_hash
+      WHERE m.group_id = $1
+        AND ($2::boolean IS NULL OR m.is_active = $2::boolean)
+      ORDER BY m.is_active DESC, c.name ASC NULLS LAST
+      LIMIT 1000
+    `, [id, active != null ? active === 'true' : null])
+
+    return rows
+  })
+
   // ─── Links ────────────────────────────────────────────────────────────────
   fastify.get('/links', { preHandler: authenticate }, async (request, reply) => {
     const { domain, group_id } = request.query as { domain?: string; group_id?: string }

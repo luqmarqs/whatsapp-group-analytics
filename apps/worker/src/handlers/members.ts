@@ -1,6 +1,17 @@
 import pool from '../db'
 import redis from '../redis'
-import { hashJid } from '../utils/hash'
+import { hashJid, phoneFromJid } from '../utils/hash'
+
+async function upsertContact(memberHash: string, phone: string) {
+  await pool.query(
+    `INSERT INTO whatsapp_contacts (member_hash, phone)
+     VALUES ($1, $2)
+     ON CONFLICT (member_hash) DO UPDATE SET
+       phone      = EXCLUDED.phone,
+       updated_at = NOW()`,
+    [memberHash, phone],
+  )
+}
 
 export async function handleParticipantUpdate(
   groupJid: string,
@@ -22,6 +33,7 @@ export async function handleParticipantUpdate(
 
   for (const participantJid of participants) {
     const memberHash = hashJid(participantJid)
+    await upsertContact(memberHash, phoneFromJid(participantJid))
 
     // Deduplicate via Redis (1h TTL per event)
     const dedupKey = `event:${groupId}:${memberHash}:${eventType}:${Math.floor(Date.now() / 3_600_000)}`

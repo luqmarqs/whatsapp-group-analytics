@@ -1,6 +1,18 @@
 import { WASocket } from '@whiskeysockets/baileys'
 import pool from '../db'
-import { hashJid } from '../utils/hash'
+import { hashJid, phoneFromJid } from '../utils/hash'
+
+async function upsertContact(memberHash: string, phone: string, name?: string | null) {
+  await pool.query(
+    `INSERT INTO whatsapp_contacts (member_hash, phone, name)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (member_hash) DO UPDATE SET
+       phone      = EXCLUDED.phone,
+       name       = COALESCE(EXCLUDED.name, whatsapp_contacts.name),
+       updated_at = NOW()`,
+    [memberHash, phone, name ?? null],
+  )
+}
 
 export async function syncGroups(sock: WASocket, instanceId: string) {
   console.log('[groups] syncing all participating groups…')
@@ -44,6 +56,8 @@ export async function upsertGroup(
   if (meta.participants && meta.participants.length > 0) {
     for (const p of meta.participants) {
       const memberHash = hashJid(p.id)
+      const phone = phoneFromJid(p.id)
+      await upsertContact(memberHash, phone, (p as { notify?: string }).notify ?? null)
       await pool.query(
         `INSERT INTO whatsapp_group_members (group_id, member_hash, role, is_active)
          VALUES ($1, $2, $3, true)

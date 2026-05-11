@@ -9,3 +9,8 @@ export function hashJid(jid: string): string {
   const bare = jid.replace(/@.+$/, '')
   return sha256(bare)
 }
+
+export function phoneFromJid(jid: string): string {
+  // Examples: 5511999999999@s.whatsapp.net or 5511999999999:2@s.whatsapp.net (multi-device)
+  return jid.replace(/@.+$/, '').replace(/:\d+$/, '')
+}

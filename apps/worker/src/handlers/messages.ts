@@ -1,7 +1,7 @@
 import { proto } from '@whiskeysockets/baileys'
 import pool from '../db'
 import redis from '../redis'
-import { hashJid } from '../utils/hash'
+import { hashJid, phoneFromJid } from '../utils/hash'
 import { extractLinks } from '../utils/links'
 
 const STORE_BODY = process.env.STORE_MESSAGE_BODY === 'true'
@@ -72,6 +72,19 @@ export async function handleMessage(msg: WAMessage, groupJid: string) {
   const senderJid = msg.key.participant ?? msg.participant ?? ''
   const senderHash = hashJid(senderJid)
   const timestamp = new Date((msg.messageTimestamp as number) * 1000)
+
+  // Update contact with phone and latest pushName (non-blocking)
+  if (senderJid) {
+    pool.query(
+      `INSERT INTO whatsapp_contacts (member_hash, phone, name)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (member_hash) DO UPDATE SET
+         phone      = EXCLUDED.phone,
+         name       = COALESCE(EXCLUDED.name, whatsapp_contacts.name),
+         updated_at = NOW()`,
+      [senderHash, phoneFromJid(senderJid), msg.pushName ?? null],
+    ).catch(() => { /* non-critical */ })
+  }
   const msgType = getMessageType(msg)
   const media = hasMedia(msg)
   const text = getMessageText(msg)
