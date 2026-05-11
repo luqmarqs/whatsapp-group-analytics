@@ -7,7 +7,8 @@ export async function runDailyMetrics(date?: string) {
   await pool.query(`
     INSERT INTO whatsapp_daily_group_metrics
       (group_id, date, message_count, link_count, media_count,
-       unique_senders_count, join_count, leave_count, net_member_growth)
+       unique_senders_count, join_count, leave_count, net_member_growth,
+       member_count_eod)
     SELECT
       g.id,
       $1::date,
@@ -17,7 +18,8 @@ export async function runDailyMetrics(date?: string) {
       COUNT(DISTINCT m.sender_hash)::int,
       COALESCE(ev.join_count,  0)::int,
       COALESCE(ev.leave_count, 0)::int,
-      COALESCE(ev.join_count,  0) - COALESCE(ev.leave_count, 0)
+      COALESCE(ev.join_count,  0) - COALESCE(ev.leave_count, 0),
+      g.member_count
     FROM whatsapp_groups g
     LEFT JOIN whatsapp_messages m
       ON m.group_id = g.id AND DATE(m.timestamp AT TIME ZONE 'UTC') = $1::date
@@ -39,6 +41,7 @@ export async function runDailyMetrics(date?: string) {
       join_count           = EXCLUDED.join_count,
       leave_count          = EXCLUDED.leave_count,
       net_member_growth    = EXCLUDED.net_member_growth,
+      member_count_eod     = EXCLUDED.member_count_eod,
       updated_at           = NOW()
   `, [target])
 

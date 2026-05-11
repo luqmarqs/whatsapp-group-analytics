@@ -159,6 +159,44 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
     return rows
   })
 
+  // ─── Member evolution ─────────────────────────────────────────────────────
+  fastify.get('/groups/:id/member-evolution', { preHandler: authenticate }, async (request, _reply) => {
+    const { id } = request.params as { id: string }
+    const days = Math.min(parseInt((request.query as { days?: string }).days ?? '90'), 365)
+
+    // Reconstruct member_count for days without a snapshot using a window sum of
+    // net_member_growth from the most recent date backwards, anchored on the
+    // current member_count from whatsapp_groups.
+    const { rows } = await pool.query(`
+      WITH recent AS (
+        SELECT date, join_count, leave_count, net_member_growth, member_count_eod
+        FROM whatsapp_daily_group_metrics
+        WHERE group_id = $1
+        ORDER BY date DESC
+        LIMIT $2
+      )
+      SELECT
+        date,
+        join_count,
+        leave_count,
+        COALESCE(
+          member_count_eod,
+          (SELECT member_count FROM whatsapp_groups WHERE id = $1)
+            - COALESCE(
+                SUM(net_member_growth) OVER (
+                  ORDER BY date DESC
+                  ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                ),
+                0
+              )
+        ) AS member_count
+      FROM recent
+      ORDER BY date ASC
+    `, [id, days])
+
+    return rows
+  })
+
   // ─── Links ────────────────────────────────────────────────────────────────
   fastify.get('/links', { preHandler: authenticate }, async (request, reply) => {
     const { domain, group_id } = request.query as { domain?: string; group_id?: string }

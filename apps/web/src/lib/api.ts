@@ -88,6 +88,13 @@ export interface DailyMetric {
   net_member_growth: number
 }
 
+export interface MemberEvolution {
+  date: string
+  member_count: number
+  join_count: number
+  leave_count: number
+}
+
 export interface Link {
   id: string
   url_hash: string

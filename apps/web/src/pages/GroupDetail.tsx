@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { ArrowLeft, Users, MessageSquare, Link2 } from 'lucide-react'
 import ActivityChart from '../components/ActivityChart'
+import MemberEvolutionChart from '../components/MemberEvolutionChart'
 import Badge from '../components/Badge'
-import { api, GroupDetail as GD } from '../lib/api'
+import { api, GroupDetail as GD, MemberEvolution } from '../lib/api'
 
 function alertSeverityVariant(s: string) {
   if (s === 'critical') return 'red'
@@ -14,14 +15,17 @@ function alertSeverityVariant(s: string) {
 export default function GroupDetail() {
   const { id } = useParams<{ id: string }>()
   const [data, setData] = useState<GD | null>(null)
+  const [evolution, setEvolution] = useState<MemberEvolution[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   useEffect(() => {
     if (!id) return
-    api
-      .get<GD>(`/whatsapp/groups/${id}`)
-      .then(setData)
+    Promise.all([
+      api.get<GD>(`/whatsapp/groups/${id}`),
+      api.get<MemberEvolution[]>(`/whatsapp/groups/${id}/member-evolution?days=90`),
+    ])
+      .then(([detail, evo]) => { setData(detail); setEvolution(evo) })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
   }, [id])
@@ -76,6 +80,18 @@ export default function GroupDetail() {
           <ActivityChart data={metrics} />
         ) : (
           <p className="text-sm text-gray-400">Sem dados de métricas ainda.</p>
+        )}
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+        <h2 className="text-sm font-semibold text-gray-700 mb-1">Evolução de membros (90 dias)</h2>
+        <p className="text-xs text-gray-400 mb-4">
+          Linha roxa = total de membros · Barras verdes/vermelhas = entradas/saídas por dia
+        </p>
+        {evolution.length > 0 ? (
+          <MemberEvolutionChart data={evolution} />
+        ) : (
+          <p className="text-sm text-gray-400">Sem dados de evolução ainda.</p>
         )}
       </div>
 
