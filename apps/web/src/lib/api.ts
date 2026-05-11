@@ -54,7 +54,13 @@ export interface Overview {
   links_24h: number
   joins_7d: number
   leaves_7d: number
+  unique_members: number
   generated_at: string
+}
+
+export interface PeakHour {
+  hour: number
+  message_count: number
 }
 
 export interface Group {
@@ -114,6 +120,9 @@ export interface TopGroup {
   leaves_period: number
   net_growth_period: number
   active_members_period: number
+  messages_7d: number
+  messages_prev7d: number
+  engagement_rate: number
 }
 
 export interface Link {

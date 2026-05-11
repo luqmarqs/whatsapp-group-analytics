@@ -1,4 +1,5 @@
 import { FastifyRequest } from 'fastify'
+import { Pool } from 'pg'
 import pool from '../db'
 
 /**
@@ -24,7 +25,6 @@ export async function instanceScope(
     return { clause: '', values: [], nextIndex: currentParamIndex }
   }
 
-  // Non-admin: restrict to instances owned by this user
   const { rows } = await pool.query(
     'SELECT id FROM whatsapp_instances WHERE user_id = $1',
     [user.id],
@@ -39,4 +39,23 @@ export async function instanceScope(
     values: ids,
     nextIndex: currentParamIndex + ids.length,
   }
+}
+
+/**
+ * Verifies that a group belongs to an instance the user owns.
+ * Admins always pass. Returns false (not throws) so the caller decides the response.
+ */
+export async function canAccessGroup(
+  groupId: string,
+  userId: string,
+  role: string,
+): Promise<boolean> {
+  if (role === 'admin') return true
+  const { rows } = await pool.query(
+    `SELECT g.id FROM whatsapp_groups g
+     JOIN whatsapp_instances i ON i.id = g.instance_id
+     WHERE g.id = $1 AND i.user_id = $2`,
+    [groupId, userId],
+  )
+  return rows.length > 0
 }
