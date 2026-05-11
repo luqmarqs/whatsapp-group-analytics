@@ -3,6 +3,8 @@ import { AuthProvider, useAuth } from './contexts/AuthContext'
 import Layout from './components/Layout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
+import Relatorio from './pages/Relatorio'
+import Docs from './pages/Docs'
 import Whatsapp from './pages/Whatsapp'
 import Groups from './pages/Groups'
 import GroupDetail from './pages/GroupDetail'
@@ -25,7 +27,7 @@ function AppRoutes() {
     <Routes>
       <Route
         path="/login"
-        element={user ? <Navigate to="/dashboard" replace /> : <Login />}
+        element={user ? <Navigate to="/relatorio" replace /> : <Login />}
       />
       <Route
         path="/"
@@ -35,8 +37,10 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<Navigate to="/dashboard" replace />} />
+        <Route index element={<Navigate to="/relatorio" replace />} />
+        <Route path="relatorio" element={<Relatorio />} />
         <Route path="dashboard" element={<Dashboard />} />
+        <Route path="docs" element={<Docs />} />
         <Route path="whatsapp" element={<Whatsapp />} />
         <Route path="whatsapp/groups" element={<Groups />} />
         <Route path="whatsapp/groups/:id" element={<GroupDetail />} />
@@ -45,7 +49,7 @@ function AppRoutes() {
         <Route path="whatsapp/tasks" element={<Tasks />} />
         <Route path="settings" element={<Settings />} />
       </Route>
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      <Route path="*" element={<Navigate to="/relatorio" replace />} />
     </Routes>
   )
 }

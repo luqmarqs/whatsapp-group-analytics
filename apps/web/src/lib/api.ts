@@ -95,6 +95,27 @@ export interface MemberEvolution {
   leave_count: number
 }
 
+export interface Activity {
+  date: string
+  message_count: number
+  join_count: number
+  leave_count: number
+  net_member_growth: number
+  unique_senders_count: number
+}
+
+export interface TopGroup {
+  id: string
+  name: string
+  group_jid: string
+  member_count: number
+  messages_period: number
+  joins_period: number
+  leaves_period: number
+  net_growth_period: number
+  active_members_period: number
+}
+
 export interface Link {
   id: string
   url_hash: string

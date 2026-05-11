@@ -197,6 +197,53 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
     return rows
   })
 
+  // ─── Global activity (agregado de todos os grupos) ────────────────────────
+  fastify.get('/activity', { preHandler: authenticate }, async (request, _reply) => {
+    const days = Math.min(parseInt((request.query as { days?: string }).days ?? '30'), 180)
+
+    const { rows } = await pool.query(`
+      SELECT
+        date,
+        SUM(message_count)::int        AS message_count,
+        SUM(join_count)::int           AS join_count,
+        SUM(leave_count)::int          AS leave_count,
+        SUM(net_member_growth)::int    AS net_member_growth,
+        SUM(unique_senders_count)::int AS unique_senders_count
+      FROM whatsapp_daily_group_metrics
+      WHERE date >= CURRENT_DATE - ($1 || ' days')::interval
+      GROUP BY date
+      ORDER BY date ASC
+    `, [days])
+
+    return rows
+  })
+
+  // ─── Top groups (para relatório) ──────────────────────────────────────────
+  fastify.get('/top-groups', { preHandler: authenticate }, async (request, _reply) => {
+    const days = Math.min(parseInt((request.query as { days?: string }).days ?? '30'), 180)
+
+    const { rows } = await pool.query(`
+      SELECT
+        g.id,
+        g.name,
+        g.group_jid,
+        g.member_count,
+        COALESCE(SUM(d.message_count), 0)::int     AS messages_period,
+        COALESCE(SUM(d.join_count), 0)::int        AS joins_period,
+        COALESCE(SUM(d.leave_count), 0)::int       AS leaves_period,
+        COALESCE(SUM(d.net_member_growth), 0)::int AS net_growth_period,
+        COALESCE(SUM(d.unique_senders_count), 0)::int AS active_members_period
+      FROM whatsapp_groups g
+      LEFT JOIN whatsapp_daily_group_metrics d
+        ON d.group_id = g.id AND d.date >= CURRENT_DATE - ($1 || ' days')::interval
+      GROUP BY g.id
+      ORDER BY messages_period DESC
+      LIMIT 50
+    `, [days])
+
+    return rows
+  })
+
   // ─── Links ────────────────────────────────────────────────────────────────
   fastify.get('/links', { preHandler: authenticate }, async (request, reply) => {
     const { domain, group_id } = request.query as { domain?: string; group_id?: string }

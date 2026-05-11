@@ -1,23 +1,26 @@
 import { NavLink } from 'react-router-dom'
 import {
-  LayoutDashboard,
+  BarChart2,
   MessageSquare,
   Users,
   Link2,
   Bell,
   CheckSquare,
   Settings,
+  FileText,
+  BookOpen,
 } from 'lucide-react'
 import clsx from 'clsx'
 
 const nav = [
-  { to: '/dashboard',         label: 'Dashboard',  icon: LayoutDashboard },
+  { to: '/relatorio',         label: 'Relatório',   icon: BarChart2 },
   { to: '/whatsapp',          label: 'Visão Geral', icon: MessageSquare },
-  { to: '/whatsapp/groups',   label: 'Grupos',     icon: Users },
-  { to: '/whatsapp/links',    label: 'Links',      icon: Link2 },
-  { to: '/whatsapp/alerts',   label: 'Alertas',    icon: Bell },
-  { to: '/whatsapp/tasks',    label: 'Tarefas',    icon: CheckSquare },
-  { to: '/settings',          label: 'Config',     icon: Settings },
+  { to: '/whatsapp/groups',   label: 'Grupos',      icon: Users },
+  { to: '/whatsapp/links',    label: 'Links',       icon: Link2 },
+  { to: '/whatsapp/alerts',   label: 'Alertas',     icon: Bell },
+  { to: '/whatsapp/tasks',    label: 'Tarefas',     icon: CheckSquare },
+  { to: '/docs',              label: 'API Docs',    icon: BookOpen },
+  { to: '/settings',          label: 'Config',      icon: Settings },
 ]
 
 export default function Sidebar() {

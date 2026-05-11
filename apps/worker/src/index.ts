@@ -6,6 +6,14 @@ import { startWhatsApp } from './whatsapp'
 import { runDailyMetrics } from './jobs/metrics'
 import { runAlerts } from './jobs/alerts'
 
+async function runJobs() {
+  const today = new Date().toISOString().slice(0, 10)
+  console.log('[jobs] running metrics + alerts manually')
+  await runDailyMetrics(today)
+  await runAlerts()
+  console.log('[jobs] done')
+}
+
 async function main() {
   console.log('[worker] starting…')
 
@@ -13,6 +21,16 @@ async function main() {
   await pool.query('SELECT 1') // verify DB connection
 
   console.log('[worker] DB and Redis connected')
+
+  // Subscribe to manual trigger from API (separate connection required for pub/sub)
+  const sub = redis.duplicate()
+  await sub.connect()
+  sub.on('message', (channel, message) => {
+    if (channel === 'wa:jobs' && message === 'run') {
+      runJobs().catch((e) => console.error('[jobs] error', e))
+    }
+  })
+  await sub.subscribe('wa:jobs')
 
   // Daily metrics at 01:00 UTC
   cron.schedule('0 1 * * *', () => {

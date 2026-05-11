@@ -2,6 +2,8 @@ import { FastifyInstance } from 'fastify'
 import bcrypt from 'bcryptjs'
 import { z } from 'zod'
 import pool from '../db'
+import redis from '../redis'
+import { authenticate } from '../middleware/authenticate'
 
 const createUserSchema = z.object({
   email: z.string().email(),
@@ -39,5 +41,15 @@ export default async function adminRoutes(fastify: FastifyInstance) {
     )
 
     return reply.status(201).send(rows[0])
+  })
+
+  // ─── Trigger cron jobs manually ───────────────────────────────────────────
+  fastify.post('/run-jobs', { preHandler: authenticate }, async (request, reply) => {
+    const user = request.user as { role: string }
+    if (user.role !== 'admin') {
+      return reply.status(403).send({ error: 'Admin only' })
+    }
+    await redis.publish('wa:jobs', 'run')
+    return { ok: true, message: 'Jobs triggered — resultados disponíveis em instantes.' }
   })
 }
