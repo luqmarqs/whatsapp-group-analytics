@@ -1,13 +1,18 @@
 import { FastifyInstance } from 'fastify'
 import { z } from 'zod'
+import Docker from 'dockerode'
 import pool from '../db'
 import redis from '../redis'
 import { authenticate } from '../middleware/authenticate'
 import { instanceScope } from '../middleware/instanceScope'
 
+const docker = new Docker({ socketPath: process.platform === 'win32' ? '//./pipe/docker_engine' : '/var/run/docker.sock' })
+const WORKER_IMAGE   = process.env.WORKER_IMAGE   ?? 'whatsapp-group-analytics-worker'
+const DOCKER_NETWORK = process.env.DOCKER_NETWORK ?? 'whatsapp-group-analytics_backend'
+
 export default async function whatsappRoutes(fastify: FastifyInstance) {
   // ─── Instance status + QR (primeira instância do usuário) ────────────────
-  fastify.get('/instance', { preHandler: authenticate }, async (request, _reply) => {
+  fastify.get('/instance', { preHandler: authenticate }, async (request, reply) => {
     const user = request.user as { id: string; role: string }
     const { rows } = await pool.query(
       `SELECT status, jid, connected_at, name FROM whatsapp_instances
@@ -15,11 +20,96 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
        ORDER BY created_at LIMIT 1`,
       [user.role, user.id],
     )
-    const instance = rows[0] ?? { status: 'disconnected', jid: null, connected_at: null, name: 'default' }
+    if (!rows[0]) return reply.status(404).send({ error: 'no_instance' })
+    const instance = rows[0]
     const qr = instance.status !== 'connected'
       ? await redis.get(`wa:qr:${instance.name}`) ?? await redis.get('wa:qr')
       : null
     return { ...instance, qr }
+  })
+
+  // ─── Self-service: conectar WhatsApp ─────────────────────────────────────
+  fastify.post('/connect', { preHandler: authenticate }, async (request, reply) => {
+    const user = request.user as { id: string; email: string }
+
+    // Verifica se já tem instância
+    const { rows: existing } = await pool.query(
+      'SELECT id, container_name, status FROM whatsapp_instances WHERE user_id = $1 LIMIT 1',
+      [user.id],
+    )
+
+    if (existing.length > 0) {
+      const inst = existing[0]
+      // Se já tem container parado, apenas inicia
+      if (inst.container_name) {
+        try {
+          const container = docker.getContainer(inst.container_name)
+          const info = await container.inspect()
+          if (!info.State.Running) await container.start()
+          await pool.query('UPDATE whatsapp_instances SET is_running = true WHERE id = $1', [inst.id])
+        } catch { /* container pode ter sido removido externamente */ }
+      }
+      return { id: inst.id, status: inst.status, action: 'started_existing' }
+    }
+
+    // Deriva um nome único do e-mail
+    const slug = user.email.split('@')[0].toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 20)
+    const name = `user-${slug}-${user.id.slice(0, 6)}`
+    const containerName = `wga-worker-${name}`
+
+    const { rows } = await pool.query(
+      `INSERT INTO whatsapp_instances (name, status, user_id, container_name, is_running)
+       VALUES ($1, 'disconnected', $2, $3, false) RETURNING id`,
+      [name, user.id, containerName],
+    )
+    const instanceId = rows[0].id
+
+    try {
+      const container = await docker.createContainer({
+        Image: WORKER_IMAGE,
+        name: containerName,
+        Env: [
+          `DATABASE_URL=${process.env.DATABASE_URL}`,
+          `REDIS_URL=${process.env.REDIS_URL}`,
+          `INSTANCE_NAME=${name}`,
+          `SESSION_DIR=/app/sessions`,
+          `NODE_ENV=production`,
+          `STORE_MESSAGE_BODY=${process.env.STORE_MESSAGE_BODY ?? 'false'}`,
+        ],
+        HostConfig: {
+          NetworkMode: DOCKER_NETWORK,
+          Mounts: [{ Type: 'volume', Source: `wga-sessions-${name}`, Target: '/app/sessions' }],
+          RestartPolicy: { Name: 'unless-stopped' },
+        },
+      })
+      await container.start()
+      await pool.query('UPDATE whatsapp_instances SET is_running = true WHERE id = $1', [instanceId])
+    } catch (e: any) {
+      await pool.query('DELETE FROM whatsapp_instances WHERE id = $1', [instanceId])
+      return reply.status(500).send({ error: `Falha ao iniciar container: ${e.message}` })
+    }
+
+    return reply.status(201).send({ id: instanceId, name, action: 'created' })
+  })
+
+  // ─── Self-service: desconectar WhatsApp ──────────────────────────────────
+  fastify.delete('/connect', { preHandler: authenticate }, async (request, reply) => {
+    const user = request.user as { id: string }
+    const { rows } = await pool.query(
+      'SELECT id, container_name FROM whatsapp_instances WHERE user_id = $1 LIMIT 1',
+      [user.id],
+    )
+    if (!rows[0]) return reply.status(404).send({ error: 'Nenhuma instância encontrada' })
+
+    if (rows[0].container_name) {
+      try {
+        const container = docker.getContainer(rows[0].container_name)
+        await container.stop().catch(() => {})
+        await container.remove()
+      } catch { /* já removido */ }
+    }
+    await pool.query('DELETE FROM whatsapp_instances WHERE id = $1', [rows[0].id])
+    return { ok: true }
   })
 
   // ─── Overview KPIs ────────────────────────────────────────────────────────
