@@ -1,9 +1,20 @@
 import { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import pool from '../db'
+import redis from '../redis'
 import { authenticate } from '../middleware/authenticate'
 
 export default async function whatsappRoutes(fastify: FastifyInstance) {
+  // ─── Instance status + QR ─────────────────────────────────────────────────
+  fastify.get('/instance', { preHandler: authenticate }, async (_req, _reply) => {
+    const { rows } = await pool.query(
+      `SELECT status, jid, connected_at FROM whatsapp_instances ORDER BY created_at LIMIT 1`,
+    )
+    const instance = rows[0] ?? { status: 'disconnected', jid: null, connected_at: null }
+    const qr = instance.status !== 'connected' ? await redis.get('wa:qr') : null
+    return { ...instance, qr }
+  })
+
   // ─── Overview KPIs ────────────────────────────────────────────────────────
   fastify.get('/overview', { preHandler: authenticate }, async (_req, reply) => {
     const now = new Date()

@@ -6,9 +6,11 @@ import makeWASocket, {
   WASocket,
 } from '@whiskeysockets/baileys'
 import { Boom } from '@hapi/boom'
+import QRCode from 'qrcode'
 import pino from 'pino'
 import path from 'path'
 import pool from './db'
+import redis from './redis'
 import { syncGroups, upsertGroup } from './handlers/groups'
 import { handleMessage } from './handlers/messages'
 import { handleParticipantUpdate } from './handlers/members'
@@ -31,11 +33,15 @@ async function getOrCreateInstance(): Promise<string> {
 }
 
 async function updateInstanceStatus(id: string, status: string, jid?: string) {
+  // Use a boolean param for the CASE to avoid PostgreSQL type-inference conflicts
+  // when $1 appears in both SET and CASE clauses with different expected types.
   await pool.query(
     `UPDATE whatsapp_instances
-     SET status = $1, jid = COALESCE($2, jid), connected_at = CASE WHEN $1 = 'connected' THEN NOW() ELSE connected_at END, updated_at = NOW()
-     WHERE id = $3`,
-    [status, jid ?? null, id],
+     SET status = $1, jid = COALESCE($2, jid),
+         connected_at = CASE WHEN $3 THEN NOW() ELSE connected_at END,
+         updated_at = NOW()
+     WHERE id = $4`,
+    [status, jid ?? null, status === 'connected', id],
   )
 }
 
@@ -51,7 +57,6 @@ export async function startWhatsApp() {
     version,
     auth: state,
     logger: pino({ level: 'silent' }),
-    printQRInTerminal: true,
     browser: ['WhatsApp Analytics', 'Chrome', '120.0'],
     syncFullHistory: false,
     markOnlineOnConnect: false,
@@ -60,7 +65,17 @@ export async function startWhatsApp() {
   sock.ev.on('creds.update', saveCreds)
 
   sock.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect } = update
+    const { connection, lastDisconnect, qr } = update
+
+    if (qr) {
+      try {
+        const png = await QRCode.toDataURL(qr)
+        await redis.set('wa:qr', png, 'EX', 120)
+        console.log('[wa] QR code ready — scan via the web dashboard')
+      } catch (err) {
+        console.error('[wa] QR generation error', err)
+      }
+    }
 
     if (connection === 'close') {
       const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode

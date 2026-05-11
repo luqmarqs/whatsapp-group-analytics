@@ -5,16 +5,68 @@ import {
 import KpiCard from '../components/KpiCard'
 import { api, Overview } from '../lib/api'
 
+interface InstanceStatus {
+  status: string
+  jid: string | null
+  connected_at: string | null
+  qr: string | null
+}
+
 export default function Whatsapp() {
+  const [instance, setInstance] = useState<InstanceStatus | null>(null)
   const [data, setData] = useState<Overview | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    api.get<Overview>('/whatsapp/overview').then(setData).finally(() => setLoading(false))
+    let interval: ReturnType<typeof setInterval>
+
+    async function load() {
+      try {
+        const inst = await api.get<InstanceStatus>('/whatsapp/instance')
+        setInstance(inst)
+
+        if (inst.status === 'connected') {
+          const overview = await api.get<Overview>('/whatsapp/overview')
+          setData(overview)
+          clearInterval(interval)
+        }
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    load()
+    // Poll every 5 s while waiting for QR scan / connection
+    interval = setInterval(load, 5_000)
+    return () => clearInterval(interval)
   }, [])
 
   if (loading) return <p className="text-gray-500">Carregando…</p>
-  if (!data)   return null
+
+  if (instance?.status !== 'connected') {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-xl font-bold text-gray-800">WhatsApp — Conectar</h1>
+        <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm flex flex-col items-center gap-4">
+          {instance?.qr ? (
+            <>
+              <p className="text-sm text-gray-600">
+                Abra o WhatsApp no celular → Dispositivos conectados → Conectar dispositivo e escaneie:
+              </p>
+              <img src={instance.qr} alt="QR code WhatsApp" className="w-64 h-64" />
+              <p className="text-xs text-gray-400">O QR expira em 2 minutos. A página atualiza automaticamente.</p>
+            </>
+          ) : (
+            <p className="text-sm text-gray-500">
+              Aguardando QR code… verifique se o worker está rodando.
+            </p>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  if (!data) return null
 
   return (
     <div className="space-y-6">

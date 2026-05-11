@@ -1,0 +1,17 @@
+:80 {
+  @api path /api/*
+  handle @api {
+    uri strip_prefix /api
+    reverse_proxy api:3001
+  }
+
+  handle {
+    reverse_proxy web:80
+  }
+
+  encode gzip
+  log {
+    output stderr
+    level INFO
+  }
+}
