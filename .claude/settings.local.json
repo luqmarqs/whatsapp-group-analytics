@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(docker compose *)",
-      "Bash(docker exec *)"
+      "Bash(docker exec *)",
+      "Bash(curl -s http://localhost/api/health)"
     ]
   }
 }

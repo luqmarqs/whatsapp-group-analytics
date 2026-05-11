@@ -1,6 +1,7 @@
 import { WASocket } from '@whiskeysockets/baileys'
 import pool from '../db'
 import { hashJid, phoneFromJid } from '../utils/hash'
+import { isMonitored } from '../utils/monitoring'
 
 async function upsertContact(memberHash: string, phone: string, name?: string | null) {
   await pool.query(
@@ -38,6 +39,7 @@ export async function upsertGroup(
   meta: import('@whiskeysockets/baileys').GroupMetadata,
   instanceId: string,
 ) {
+  // Always upsert group metadata (needed for selection UI)
   const { rows } = await pool.query(
     `INSERT INTO whatsapp_groups (instance_id, group_jid, name, description, member_count)
      VALUES ($1, $2, $3, $4, $5)
@@ -46,14 +48,14 @@ export async function upsertGroup(
        description  = EXCLUDED.description,
        member_count = EXCLUDED.member_count,
        updated_at   = NOW()
-     RETURNING id`,
+     RETURNING id, is_monitored`,
     [instanceId, jid, meta.subject ?? null, meta.desc ?? null, meta.participants?.length ?? 0],
   )
 
-  const groupId = rows[0].id
+  const { id: groupId, is_monitored } = rows[0]
 
-  // Upsert participants
-  if (meta.participants && meta.participants.length > 0) {
+  // Only store individual members for monitored groups — no wasted storage
+  if (is_monitored && meta.participants && meta.participants.length > 0) {
     for (const p of meta.participants) {
       const memberHash = hashJid(p.id)
       const phone = phoneFromJid(p.id)

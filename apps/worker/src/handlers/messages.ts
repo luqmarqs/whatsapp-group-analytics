@@ -3,6 +3,7 @@ import pool from '../db'
 import redis from '../redis'
 import { hashJid, phoneFromJid } from '../utils/hash'
 import { extractLinks } from '../utils/links'
+import { isMonitored } from '../utils/monitoring'
 
 const STORE_BODY = process.env.STORE_MESSAGE_BODY === 'true'
 
@@ -54,6 +55,8 @@ function approximateSize(msg: WAMessage): number | null {
 }
 
 export async function handleMessage(msg: WAMessage, groupJid: string) {
+  if (!isMonitored(groupJid)) return  // skip unmonitored groups — no DB/storage cost
+
   const messageId = msg.key.id
   if (!messageId) return
 

@@ -182,12 +182,19 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
     const { q } = request.query as { q?: string }
     const scope = await instanceScope(request as any, 2)
 
+    // monitored=all → todos; monitored=false → só não monitorados; default → só monitorados
+    const monitoredFilter = (request.query as { monitored?: string }).monitored
+    const monitoredClause = monitoredFilter === 'all'   ? ''
+                          : monitoredFilter === 'false' ? 'AND g.is_monitored = false'
+                          :                               'AND g.is_monitored = true'
+
     const { rows } = await pool.query(`
       SELECT
         g.id,
         g.group_jid,
         g.name,
         g.member_count,
+        g.is_monitored,
         g.created_at,
         g.updated_at,
         MAX(m.timestamp)                                                         AS last_message_at,
@@ -199,13 +206,74 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
       FROM whatsapp_groups g
       LEFT JOIN whatsapp_messages m ON m.group_id = g.id
       WHERE ($1::text IS NULL OR g.name ILIKE '%' || $1 || '%')
+        ${monitoredClause}
         ${scope.clause}
       GROUP BY g.id
-      ORDER BY last_message_at DESC NULLS LAST
-      LIMIT 500
+      ORDER BY g.name ASC NULLS LAST
+      LIMIT 1000
     `, [q ?? null, ...scope.values])
 
     return rows
+  })
+
+  // ─── Atualizar is_monitored de um grupo ───────────────────────────────────
+  fastify.patch('/groups/:id', { preHandler: authenticate }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    const user = request.user as { id: string; role: string }
+    if (!await canAccessGroup(id, user.id, user.role)) {
+      return reply.status(404).send({ error: 'Group not found' })
+    }
+    const { is_monitored } = request.body as { is_monitored: boolean }
+    if (typeof is_monitored !== 'boolean') {
+      return reply.status(400).send({ error: 'is_monitored must be boolean' })
+    }
+    await pool.query(
+      'UPDATE whatsapp_groups SET is_monitored = $1, updated_at = NOW() WHERE id = $2',
+      [is_monitored, id],
+    )
+    // Notify worker to reload monitored set
+    const { rows } = await pool.query(
+      'SELECT i.name FROM whatsapp_instances i JOIN whatsapp_groups g ON g.instance_id = i.id WHERE g.id = $1',
+      [id],
+    )
+    if (rows[0]) await redis.publish(`wa:monitoring:changed:${rows[0].name}`, 'reload')
+    return { ok: true }
+  })
+
+  // ─── Bulk monitor/unmonitor ───────────────────────────────────────────────
+  fastify.post('/groups/bulk-monitor', { preHandler: authenticate }, async (request, reply) => {
+    const user = request.user as { id: string; role: string }
+    const { group_ids, is_monitored } = request.body as { group_ids: string[]; is_monitored: boolean }
+    if (!Array.isArray(group_ids) || typeof is_monitored !== 'boolean') {
+      return reply.status(400).send({ error: 'group_ids (array) and is_monitored (boolean) required' })
+    }
+    if (group_ids.length === 0) return { ok: true, updated: 0 }
+
+    // Restrict non-admins to their own instance groups
+    const { rows: accessible } = await pool.query(
+      user.role === 'admin'
+        ? `SELECT g.id, i.name AS instance_name FROM whatsapp_groups g
+           JOIN whatsapp_instances i ON i.id = g.instance_id
+           WHERE g.id = ANY($1::uuid[])`
+        : `SELECT g.id, i.name AS instance_name FROM whatsapp_groups g
+           JOIN whatsapp_instances i ON i.id = g.instance_id
+           WHERE g.id = ANY($1::uuid[]) AND i.user_id = $2::uuid`,
+      user.role === 'admin' ? [group_ids] : [group_ids, user.id],
+    )
+
+    const ids = accessible.map((r) => r.id)
+    if (ids.length === 0) return { ok: true, updated: 0 }
+
+    await pool.query(
+      'UPDATE whatsapp_groups SET is_monitored = $1, updated_at = NOW() WHERE id = ANY($2::uuid[])',
+      [is_monitored, ids],
+    )
+
+    // Notify affected workers
+    const instanceNames = [...new Set(accessible.map((r) => r.instance_name))]
+    await Promise.all(instanceNames.map((n) => redis.publish(`wa:monitoring:changed:${n}`, 'reload')))
+
+    return { ok: true, updated: ids.length }
   })
 
   // ─── Group detail ─────────────────────────────────────────────────────────

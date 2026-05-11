@@ -68,6 +68,7 @@ export interface Group {
   group_jid: string
   name: string
   member_count: number
+  is_monitored: boolean
   last_message_at: string | null
   messages_24h: number
   silent_3d: boolean

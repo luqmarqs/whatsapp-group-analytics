@@ -5,6 +5,9 @@ import redis from './redis'
 import { startWhatsApp } from './whatsapp'
 import { runDailyMetrics } from './jobs/metrics'
 import { runAlerts } from './jobs/alerts'
+import { loadMonitoredGroups } from './utils/monitoring'
+
+const INSTANCE_NAME = process.env.INSTANCE_NAME ?? 'default'
 
 async function runJobs() {
   const today = new Date().toISOString().slice(0, 10)
@@ -18,27 +21,34 @@ async function main() {
   console.log('[worker] starting…')
 
   await redis.connect()
-  await pool.query('SELECT 1') // verify DB connection
+  await pool.query('SELECT 1')
 
   console.log('[worker] DB and Redis connected')
 
-  // Subscribe to manual trigger from API (separate connection required for pub/sub)
+  // Load monitored groups into memory before starting WhatsApp
+  await loadMonitoredGroups()
+
+  // Subscriber connection for pub/sub (ioredis requires separate connection)
   const sub = redis.duplicate()
   await sub.connect()
   sub.on('message', (channel, message) => {
     if (channel === 'wa:jobs' && message === 'run') {
       runJobs().catch((e) => console.error('[jobs] error', e))
     }
+    if (channel === `wa:jobs:${INSTANCE_NAME}` && message === 'run') {
+      runJobs().catch((e) => console.error('[jobs] error', e))
+    }
+    if (channel === `wa:monitoring:changed:${INSTANCE_NAME}`) {
+      loadMonitoredGroups().catch((e) => console.error('[monitor] reload error', e))
+    }
   })
-  await sub.subscribe(`wa:jobs:${process.env.INSTANCE_NAME ?? 'default'}`)
-  await sub.subscribe('wa:jobs') // canal global (mantém compatibilidade)
+  await sub.subscribe('wa:jobs')
+  await sub.subscribe(`wa:jobs:${INSTANCE_NAME}`)
+  await sub.subscribe(`wa:monitoring:changed:${INSTANCE_NAME}`)
 
-  // Daily metrics at 01:00 UTC
   cron.schedule('0 1 * * *', () => {
     runDailyMetrics().catch((e) => console.error('[cron] metrics error', e))
   })
-
-  // Alerts at 01:15 UTC
   cron.schedule('15 1 * * *', () => {
     runAlerts().catch((e) => console.error('[cron] alerts error', e))
   })

@@ -1,6 +1,7 @@
 import pool from '../db'
 import redis from '../redis'
 import { hashJid, phoneFromJid } from '../utils/hash'
+import { isMonitored } from '../utils/monitoring'
 
 async function upsertContact(memberHash: string, phone: string) {
   await pool.query(
@@ -19,6 +20,8 @@ export async function handleParticipantUpdate(
   action: string,
   actor?: string,
 ) {
+  if (!isMonitored(groupJid)) return  // skip unmonitored — no storage cost
+
   const { rows } = await pool.query(
     'SELECT id FROM whatsapp_groups WHERE group_jid = $1',
     [groupJid],
