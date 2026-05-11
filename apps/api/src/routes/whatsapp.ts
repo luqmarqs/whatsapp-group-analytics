@@ -28,31 +28,31 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
     return { ...instance, qr }
   })
 
-  // ─── Self-service: conectar WhatsApp ─────────────────────────────────────
+  // ─── Conectar WhatsApp (self-service, máx 1 por usuário) ─────────────────
   fastify.post('/connect', { preHandler: authenticate }, async (request, reply) => {
     const user = request.user as { id: string; email: string }
 
-    // Verifica se já tem instância
     const { rows: existing } = await pool.query(
       'SELECT id, container_name, status FROM whatsapp_instances WHERE user_id = $1 LIMIT 1',
       [user.id],
     )
 
     if (existing.length > 0) {
-      const inst = existing[0]
-      // Se já tem container parado, apenas inicia
-      if (inst.container_name) {
+      // Já tem instância — reinicia o container se estiver parado
+      if (existing[0].container_name) {
         try {
-          const container = docker.getContainer(inst.container_name)
+          const container = docker.getContainer(existing[0].container_name)
           const info = await container.inspect()
-          if (!info.State.Running) await container.start()
-          await pool.query('UPDATE whatsapp_instances SET is_running = true WHERE id = $1', [inst.id])
-        } catch { /* container pode ter sido removido externamente */ }
+          if (!info.State.Running) {
+            await container.start()
+            await pool.query('UPDATE whatsapp_instances SET is_running = true WHERE id = $1', [existing[0].id])
+          }
+        } catch { /* container removido externamente */ }
       }
-      return { id: inst.id, status: inst.status, action: 'started_existing' }
+      return { id: existing[0].id, status: existing[0].status, action: 'started_existing' }
     }
 
-    // Deriva um nome único do e-mail
+    // Cria nova instância (nome derivado do e-mail + ID curto para unicidade)
     const slug = user.email.split('@')[0].toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 20)
     const name = `user-${slug}-${user.id.slice(0, 6)}`
     const containerName = `wga-worker-${name}`
@@ -92,7 +92,7 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
     return reply.status(201).send({ id: instanceId, name, action: 'created' })
   })
 
-  // ─── Self-service: desconectar WhatsApp ──────────────────────────────────
+  // ─── Desconectar WhatsApp (para e remove a instância do usuário) ──────────
   fastify.delete('/connect', { preHandler: authenticate }, async (request, reply) => {
     const user = request.user as { id: string }
     const { rows } = await pool.query(
