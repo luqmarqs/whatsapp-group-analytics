@@ -3,21 +3,29 @@ import { z } from 'zod'
 import pool from '../db'
 import redis from '../redis'
 import { authenticate } from '../middleware/authenticate'
+import { instanceScope } from '../middleware/instanceScope'
 
 export default async function whatsappRoutes(fastify: FastifyInstance) {
-  // ─── Instance status + QR ─────────────────────────────────────────────────
-  fastify.get('/instance', { preHandler: authenticate }, async (_req, _reply) => {
+  // ─── Instance status + QR (primeira instância do usuário) ────────────────
+  fastify.get('/instance', { preHandler: authenticate }, async (request, _reply) => {
+    const user = request.user as { id: string; role: string }
     const { rows } = await pool.query(
-      `SELECT status, jid, connected_at FROM whatsapp_instances ORDER BY created_at LIMIT 1`,
+      `SELECT status, jid, connected_at, name FROM whatsapp_instances
+       WHERE ($1 = 'admin' OR user_id = $2::uuid)
+       ORDER BY created_at LIMIT 1`,
+      [user.role, user.id],
     )
-    const instance = rows[0] ?? { status: 'disconnected', jid: null, connected_at: null }
-    const qr = instance.status !== 'connected' ? await redis.get('wa:qr') : null
+    const instance = rows[0] ?? { status: 'disconnected', jid: null, connected_at: null, name: 'default' }
+    const qr = instance.status !== 'connected'
+      ? await redis.get(`wa:qr:${instance.name}`) ?? await redis.get('wa:qr')
+      : null
     return { ...instance, qr }
   })
 
   // ─── Overview KPIs ────────────────────────────────────────────────────────
-  fastify.get('/overview', { preHandler: authenticate }, async (_req, reply) => {
+  fastify.get('/overview', { preHandler: authenticate }, async (request, reply) => {
     const now = new Date()
+    const scope = await instanceScope(request as any, 1)
     const [overview, msgs24h, links24h, joins7d, leaves7d] = await Promise.all([
       pool.query(`
         SELECT
@@ -38,23 +46,28 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
           SELECT DISTINCT group_id FROM whatsapp_messages
           WHERE timestamp >= NOW() - INTERVAL '7 days'
         ) m7 ON m7.group_id = g.id
-      `),
+        WHERE TRUE ${scope.clause}
+      `, scope.values),
       pool.query(`
-        SELECT COUNT(*)::int AS count FROM whatsapp_messages
-        WHERE timestamp >= NOW() - INTERVAL '1 day'
-      `),
+        SELECT COUNT(*)::int AS count FROM whatsapp_messages m
+        JOIN whatsapp_groups g ON g.id = m.group_id
+        WHERE m.timestamp >= NOW() - INTERVAL '1 day' ${scope.clause}
+      `, scope.values),
       pool.query(`
-        SELECT COUNT(*)::int AS count FROM whatsapp_links
-        WHERE last_seen_at >= NOW() - INTERVAL '1 day'
-      `),
+        SELECT COUNT(*)::int AS count FROM whatsapp_links l
+        JOIN whatsapp_groups g ON g.id = l.group_id
+        WHERE l.last_seen_at >= NOW() - INTERVAL '1 day' ${scope.clause}
+      `, scope.values),
       pool.query(`
-        SELECT COUNT(*)::int AS count FROM whatsapp_group_events
-        WHERE event_type = 'join' AND timestamp >= NOW() - INTERVAL '7 days'
-      `),
+        SELECT COUNT(*)::int AS count FROM whatsapp_group_events e
+        JOIN whatsapp_groups g ON g.id = e.group_id
+        WHERE e.event_type = 'join' AND e.timestamp >= NOW() - INTERVAL '7 days' ${scope.clause}
+      `, scope.values),
       pool.query(`
-        SELECT COUNT(*)::int AS count FROM whatsapp_group_events
-        WHERE event_type = 'leave' AND timestamp >= NOW() - INTERVAL '7 days'
-      `),
+        SELECT COUNT(*)::int AS count FROM whatsapp_group_events e
+        JOIN whatsapp_groups g ON g.id = e.group_id
+        WHERE e.event_type = 'leave' AND e.timestamp >= NOW() - INTERVAL '7 days' ${scope.clause}
+      `, scope.values),
     ])
 
     return {
@@ -70,6 +83,7 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
   // ─── Groups list ──────────────────────────────────────────────────────────
   fastify.get('/groups', { preHandler: authenticate }, async (request, reply) => {
     const { q } = request.query as { q?: string }
+    const scope = await instanceScope(request as any, 2)
 
     const { rows } = await pool.query(`
       SELECT
@@ -88,10 +102,11 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
       FROM whatsapp_groups g
       LEFT JOIN whatsapp_messages m ON m.group_id = g.id
       WHERE ($1::text IS NULL OR g.name ILIKE '%' || $1 || '%')
+        ${scope.clause}
       GROUP BY g.id
       ORDER BY last_message_at DESC NULLS LAST
       LIMIT 500
-    `, [q ?? null])
+    `, [q ?? null, ...scope.values])
 
     return rows
   })
@@ -200,20 +215,23 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
   // ─── Global activity (agregado de todos os grupos) ────────────────────────
   fastify.get('/activity', { preHandler: authenticate }, async (request, _reply) => {
     const days = Math.min(parseInt((request.query as { days?: string }).days ?? '30'), 180)
+    const scope = await instanceScope(request as any, 2)
 
     const { rows } = await pool.query(`
       SELECT
-        date,
-        SUM(message_count)::int        AS message_count,
-        SUM(join_count)::int           AS join_count,
-        SUM(leave_count)::int          AS leave_count,
-        SUM(net_member_growth)::int    AS net_member_growth,
-        SUM(unique_senders_count)::int AS unique_senders_count
-      FROM whatsapp_daily_group_metrics
-      WHERE date >= CURRENT_DATE - ($1 || ' days')::interval
-      GROUP BY date
-      ORDER BY date ASC
-    `, [days])
+        d.date,
+        SUM(d.message_count)::int        AS message_count,
+        SUM(d.join_count)::int           AS join_count,
+        SUM(d.leave_count)::int          AS leave_count,
+        SUM(d.net_member_growth)::int    AS net_member_growth,
+        SUM(d.unique_senders_count)::int AS unique_senders_count
+      FROM whatsapp_daily_group_metrics d
+      JOIN whatsapp_groups g ON g.id = d.group_id
+      WHERE d.date >= CURRENT_DATE - ($1 || ' days')::interval
+        ${scope.clause}
+      GROUP BY d.date
+      ORDER BY d.date ASC
+    `, [days, ...scope.values])
 
     return rows
   })
@@ -221,6 +239,7 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
   // ─── Top groups (para relatório) ──────────────────────────────────────────
   fastify.get('/top-groups', { preHandler: authenticate }, async (request, _reply) => {
     const days = Math.min(parseInt((request.query as { days?: string }).days ?? '30'), 180)
+    const scope = await instanceScope(request as any, 2)
 
     const { rows } = await pool.query(`
       SELECT
@@ -228,18 +247,19 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
         g.name,
         g.group_jid,
         g.member_count,
-        COALESCE(SUM(d.message_count), 0)::int     AS messages_period,
-        COALESCE(SUM(d.join_count), 0)::int        AS joins_period,
-        COALESCE(SUM(d.leave_count), 0)::int       AS leaves_period,
-        COALESCE(SUM(d.net_member_growth), 0)::int AS net_growth_period,
+        COALESCE(SUM(d.message_count), 0)::int        AS messages_period,
+        COALESCE(SUM(d.join_count), 0)::int           AS joins_period,
+        COALESCE(SUM(d.leave_count), 0)::int          AS leaves_period,
+        COALESCE(SUM(d.net_member_growth), 0)::int    AS net_growth_period,
         COALESCE(SUM(d.unique_senders_count), 0)::int AS active_members_period
       FROM whatsapp_groups g
       LEFT JOIN whatsapp_daily_group_metrics d
         ON d.group_id = g.id AND d.date >= CURRENT_DATE - ($1 || ' days')::interval
+      WHERE TRUE ${scope.clause}
       GROUP BY g.id
       ORDER BY messages_period DESC
       LIMIT 50
-    `, [days])
+    `, [days, ...scope.values])
 
     return rows
   })

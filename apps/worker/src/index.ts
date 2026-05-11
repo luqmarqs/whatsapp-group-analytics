@@ -30,7 +30,8 @@ async function main() {
       runJobs().catch((e) => console.error('[jobs] error', e))
     }
   })
-  await sub.subscribe('wa:jobs')
+  await sub.subscribe(`wa:jobs:${process.env.INSTANCE_NAME ?? 'default'}`)
+  await sub.subscribe('wa:jobs') // canal global (mantém compatibilidade)
 
   // Daily metrics at 01:00 UTC
   cron.schedule('0 1 * * *', () => {

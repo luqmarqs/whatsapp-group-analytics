@@ -10,7 +10,7 @@ const loginSchema = z.object({
 })
 
 export default async function authRoutes(fastify: FastifyInstance) {
-  fastify.post('/login', async (request, reply) => {
+  fastify.post('/login', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
     const parsed = loginSchema.safeParse(request.body)
     if (!parsed.success) {
       return reply.status(400).send({ error: 'Invalid input', details: parsed.error.issues })

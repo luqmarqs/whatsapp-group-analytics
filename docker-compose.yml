@@ -63,6 +63,12 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       JWT_SECRET: ${JWT_SECRET}
       FIRST_ADMIN_TOKEN: ${FIRST_ADMIN_TOKEN}
+      DOMAIN: ${DOMAIN}
+      STORE_MESSAGE_BODY: ${STORE_MESSAGE_BODY:-false}
+      WORKER_IMAGE: ${WORKER_IMAGE:-whatsapp-group-analytics-worker}
+      DOCKER_NETWORK: ${DOCKER_NETWORK:-whatsapp-group-analytics_backend}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
       postgres:
         condition: service_healthy

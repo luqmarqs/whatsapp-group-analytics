@@ -7,8 +7,8 @@ import {
   Bell,
   CheckSquare,
   Settings,
-  FileText,
   BookOpen,
+  ShieldCheck,
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -19,6 +19,7 @@ const nav = [
   { to: '/whatsapp/links',    label: 'Links',       icon: Link2 },
   { to: '/whatsapp/alerts',   label: 'Alertas',     icon: Bell },
   { to: '/whatsapp/tasks',    label: 'Tarefas',     icon: CheckSquare },
+  { to: '/admin',             label: 'Admin',       icon: ShieldCheck },
   { to: '/docs',              label: 'API Docs',    icon: BookOpen },
   { to: '/settings',          label: 'Config',      icon: Settings },
 ]

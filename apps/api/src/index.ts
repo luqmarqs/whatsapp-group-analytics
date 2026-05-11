@@ -1,6 +1,7 @@
 import 'dotenv/config'
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
+import rateLimit from '@fastify/rate-limit'
 import jwt from '@fastify/jwt'
 import pool from './db'
 import redis from './redis'
@@ -19,10 +20,27 @@ const fastify = Fastify({
   },
 })
 
+function getAllowedOrigins(): string | string[] | boolean {
+  const domain = process.env.DOMAIN
+  if (!domain) return true
+  return [
+    `https://${domain}`,
+    `http://${domain}`,
+    'http://localhost:5173', // Vite dev server
+    'http://localhost:3000',
+  ]
+}
+
 async function main() {
   await fastify.register(cors, {
-    origin: true,
+    origin: getAllowedOrigins(),
     credentials: true,
+  })
+
+  await fastify.register(rateLimit, {
+    global: false, // only apply where explicitly set
+    max: 10,
+    timeWindow: '1 minute',
   })
 
   await fastify.register(jwt, {

@@ -4,6 +4,7 @@ import Layout from './components/Layout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Relatorio from './pages/Relatorio'
+import Admin from './pages/Admin'
 import Docs from './pages/Docs'
 import Whatsapp from './pages/Whatsapp'
 import Groups from './pages/Groups'
@@ -39,6 +40,7 @@ function AppRoutes() {
       >
         <Route index element={<Navigate to="/relatorio" replace />} />
         <Route path="relatorio" element={<Relatorio />} />
+        <Route path="admin" element={<Admin />} />
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="docs" element={<Docs />} />
         <Route path="whatsapp" element={<Whatsapp />} />

@@ -160,3 +160,30 @@ export interface TaskStatus {
   notes: string | null
   completed_at: string | null
 }
+
+export interface AdminUser {
+  id: string
+  email: string
+  name: string
+  role: 'admin' | 'viewer'
+  created_at: string
+  updated_at: string
+}
+
+export interface Instance {
+  id: string
+  name: string
+  status: 'connected' | 'disconnected'
+  jid: string | null
+  connected_at: string | null
+  container_name: string | null
+  container_status: 'running' | 'stopped' | 'missing' | 'managed_externally'
+  is_running: boolean
+  user_name: string | null
+  user_email: string | null
+}
+
+export interface InstanceQR {
+  status: string
+  qr: string | null
+}

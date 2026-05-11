@@ -70,7 +70,7 @@ export async function startWhatsApp() {
     if (qr) {
       try {
         const png = await QRCode.toDataURL(qr)
-        await redis.set('wa:qr', png, 'EX', 120)
+        await redis.set(`wa:qr:${INSTANCE_NAME}`, png, 'EX', 120)
         console.log('[wa] QR code ready — scan via the web dashboard')
       } catch (err) {
         console.error('[wa] QR generation error', err)
