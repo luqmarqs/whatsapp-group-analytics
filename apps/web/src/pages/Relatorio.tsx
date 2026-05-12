@@ -143,6 +143,8 @@ export default function Relatorio() {
     : null
   const maxPeakCount = peakHours.length ? Math.max(...peakHours.map(h => h.message_count)) : 1
 
+  const hasMonitoredGroups = topGroups.length > 0
+
   if (loading) return (
     <div className="flex items-center justify-center h-64">
       <RefreshCw size={20} className="animate-spin text-gray-400" />
@@ -170,6 +172,19 @@ export default function Relatorio() {
           </button>
         </div>
       </div>
+
+      {/* Banner: sem grupos monitorados */}
+      {!hasMonitoredGroups && overview && (
+        <Link to="/whatsapp/groups"
+          className="flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800 hover:bg-amber-100 transition-colors">
+          <Users size={16} className="text-amber-500 shrink-0" />
+          <span>
+            <strong>Nenhum grupo monitorado.</strong> Vá em{' '}
+            <span className="underline">Grupos → Gerenciar</span> para selecionar quais grupos deseja acompanhar.
+            Os dados abaixo estarão zerados até que grupos sejam selecionados.
+          </span>
+        </Link>
+      )}
 
       {/* Banner de conexão */}
       {instance && instance.status !== 'connected' && (

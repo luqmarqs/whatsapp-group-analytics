@@ -61,33 +61,33 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
           SELECT DISTINCT group_id FROM whatsapp_messages
           WHERE timestamp >= NOW() - INTERVAL '7 days'
         ) m7 ON m7.group_id = g.id
-        WHERE TRUE ${scope.clause}
+        WHERE TRUE ${scope.clause} AND g.is_monitored = true
       `, scope.values),
       pool.query(`
         SELECT COUNT(*)::int AS count FROM whatsapp_messages m
         JOIN whatsapp_groups g ON g.id = m.group_id
-        WHERE m.timestamp >= NOW() - INTERVAL '1 day' ${scope.clause}
+        WHERE m.timestamp >= NOW() - INTERVAL '1 day' ${scope.clause} AND g.is_monitored = true
       `, scope.values),
       pool.query(`
         SELECT COUNT(*)::int AS count FROM whatsapp_links l
         JOIN whatsapp_groups g ON g.id = l.group_id
-        WHERE l.last_seen_at >= NOW() - INTERVAL '1 day' ${scope.clause}
+        WHERE l.last_seen_at >= NOW() - INTERVAL '1 day' ${scope.clause} AND g.is_monitored = true
       `, scope.values),
       pool.query(`
         SELECT COUNT(*)::int AS count FROM whatsapp_group_events e
         JOIN whatsapp_groups g ON g.id = e.group_id
-        WHERE e.event_type = 'join' AND e.timestamp >= NOW() - INTERVAL '7 days' ${scope.clause}
+        WHERE e.event_type = 'join' AND e.timestamp >= NOW() - INTERVAL '7 days' ${scope.clause} AND g.is_monitored = true
       `, scope.values),
       pool.query(`
         SELECT COUNT(*)::int AS count FROM whatsapp_group_events e
         JOIN whatsapp_groups g ON g.id = e.group_id
-        WHERE e.event_type = 'leave' AND e.timestamp >= NOW() - INTERVAL '7 days' ${scope.clause}
+        WHERE e.event_type = 'leave' AND e.timestamp >= NOW() - INTERVAL '7 days' ${scope.clause} AND g.is_monitored = true
       `, scope.values),
       pool.query(`
         SELECT COUNT(DISTINCT m.member_hash)::int AS count
         FROM whatsapp_group_members m
         JOIN whatsapp_groups g ON g.id = m.group_id
-        WHERE m.is_active = true ${scope.clause}
+        WHERE m.is_active = true ${scope.clause} AND g.is_monitored = true
       `, scope.values),
     ])
 
@@ -330,7 +330,7 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
       FROM whatsapp_daily_group_metrics d
       JOIN whatsapp_groups g ON g.id = d.group_id
       WHERE d.date >= CURRENT_DATE - ($1 || ' days')::interval
-        ${scope.clause}
+        ${scope.clause} AND g.is_monitored = true
       GROUP BY d.date
       ORDER BY d.date ASC
     `, [days, ...scope.values])
@@ -350,7 +350,7 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
       FROM whatsapp_messages m
       JOIN whatsapp_groups g ON g.id = m.group_id
       WHERE m.timestamp >= NOW() - ($1 || ' days')::interval
-        ${scope.clause}
+        ${scope.clause} AND g.is_monitored = true
       GROUP BY hour
       ORDER BY hour
     `, [days, ...scope.values])
@@ -390,7 +390,7 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
       FROM whatsapp_groups g
       LEFT JOIN whatsapp_daily_group_metrics d
         ON d.group_id = g.id AND d.date >= CURRENT_DATE - ($1 || ' days')::interval
-      WHERE TRUE ${scope.clause}
+      WHERE TRUE ${scope.clause} AND g.is_monitored = true
       GROUP BY g.id
       ORDER BY messages_period DESC
       LIMIT 50
@@ -418,7 +418,7 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
       JOIN whatsapp_groups g ON g.id = l.group_id
       WHERE ($1::text IS NULL OR l.domain ILIKE '%' || $1 || '%')
         AND ($2::uuid IS NULL OR l.group_id = $2::uuid)
-        ${scope.clause}
+        ${scope.clause} AND g.is_monitored = true
       ORDER BY l.last_seen_at DESC
       LIMIT 200
     `, [domain ?? null, group_id ?? null, ...scope.values])
@@ -445,7 +445,7 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
       FROM whatsapp_alerts a
       JOIN whatsapp_groups g ON g.id = a.group_id
       WHERE ($1::boolean IS NULL OR a.is_read = NOT $1::boolean)
-        ${scope.clause}
+        ${scope.clause} AND g.is_monitored = true
       ORDER BY a.created_at DESC
       LIMIT 200
     `, [unread === 'true' ? true : null, ...scope.values])

@@ -56,11 +56,17 @@ export default function Tasks() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-gray-800">Tarefas de mobilização</h1>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-bold text-gray-900">Tarefas de mobilização</h1>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Coordene ações entre múltiplos grupos — crie uma tarefa, selecione os grupos
+            envolvidos e acompanhe o status (pendente, em andamento, concluído ou pulado) individualmente por grupo.
+          </p>
+        </div>
         <button
           onClick={() => setShowForm(!showForm)}
-          className="flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm px-3 py-1.5 rounded-lg transition-colors"
+          className="flex-shrink-0 flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm px-3 py-1.5 rounded-lg transition-colors shadow-sm"
         >
           <Plus size={14} />
           Nova tarefa

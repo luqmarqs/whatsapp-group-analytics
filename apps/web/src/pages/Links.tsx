@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Link2, Search } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { Link2, Search, ExternalLink } from 'lucide-react'
 import { api, Link as LinkType } from '../lib/api'
 
 function fmt(date: string) {
@@ -7,63 +8,81 @@ function fmt(date: string) {
 }
 
 export default function Links() {
-  const [links, setLinks] = useState<LinkType[]>([])
+  const [links, setLinks]   = useState<LinkType[]>([])
   const [loading, setLoading] = useState(true)
-  const [q, setQ] = useState('')
+  const [q, setQ]             = useState('')
 
   useEffect(() => {
+    setLoading(true)
     const params = q ? `?domain=${encodeURIComponent(q)}` : ''
     api.get<LinkType[]>(`/whatsapp/links${params}`).then(setLinks).finally(() => setLoading(false))
   }, [q])
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-gray-800">Links compartilhados</h1>
-        <div className="relative">
-          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Filtrar por domínio…"
-            className="pl-8 pr-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
-          />
-        </div>
+      <div>
+        <h1 className="text-xl font-bold text-gray-900">Links compartilhados</h1>
+        <p className="text-sm text-gray-500 mt-0.5">
+          URLs detectadas automaticamente nas mensagens dos grupos monitorados —
+          agrupadas por domínio para facilitar a análise de conteúdo circulante.
+        </p>
+      </div>
+
+      <div className="relative max-w-sm">
+        <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+        <input value={q} onChange={(e) => setQ(e.target.value)}
+          placeholder="Filtrar por domínio…"
+          className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400" />
       </div>
 
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         {loading ? (
           <p className="p-6 text-gray-500 text-sm">Carregando…</p>
         ) : links.length === 0 ? (
-          <p className="p-6 text-gray-400 text-sm">Nenhum link encontrado.</p>
+          <div className="p-12 text-center space-y-2">
+            <Link2 size={32} className="mx-auto text-gray-200" />
+            <p className="text-sm font-medium text-gray-500">
+              {q ? `Nenhum link com domínio "${q}"` : 'Nenhum link registrado ainda'}
+            </p>
+            <p className="text-xs text-gray-400">
+              Os links são extraídos automaticamente das mensagens dos{' '}
+              <Link to="/whatsapp/groups" className="text-indigo-500 hover:underline">grupos monitorados</Link>.
+            </p>
+          </div>
         ) : (
           <table className="min-w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
+            <thead className="bg-gray-50 border-b border-gray-100">
               <tr>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Domínio</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Grupo</th>
-                <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Compartilhamentos</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Primeira vez</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Última vez</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Domínio</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Grupo</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Vezes compartilhado</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Primeira vez</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Última vez</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody className="divide-y divide-gray-50">
               {links.map((l) => (
-                <tr key={l.id} className="hover:bg-gray-50 transition-colors">
+                <tr key={l.id} className="hover:bg-indigo-50/20 transition-colors">
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
-                      <Link2 size={13} className="text-gray-400" />
-                      <span className="text-gray-800 font-medium">{l.domain}</span>
+                      <Link2 size={13} className="text-gray-400 shrink-0" />
+                      <span className="font-medium text-gray-800">{l.domain}</span>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-gray-600 max-w-xs truncate">{l.group_name}</td>
+                  <td className="px-4 py-3 max-w-[200px]">
+                    <Link to={`/whatsapp/groups/${l.group_id}`}
+                      className="text-gray-600 hover:text-indigo-600 hover:underline truncate block">
+                      {l.group_name}
+                    </Link>
+                  </td>
                   <td className="px-4 py-3 text-right">
-                    <span className="bg-blue-100 text-blue-700 text-xs font-semibold px-2 py-0.5 rounded">
-                      {l.count}x
+                    <span className="inline-flex items-center gap-1 font-semibold text-indigo-600">
+                      <ExternalLink size={11} />
+                      {l.count}×
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-gray-500">{fmt(l.first_seen_at)}</td>
-                  <td className="px-4 py-3 text-gray-500">{fmt(l.last_seen_at)}</td>
+                  <td className="px-4 py-3 text-gray-500 text-xs">{fmt(l.first_seen_at)}</td>
+                  <td className="px-4 py-3 text-gray-500 text-xs">{fmt(l.last_seen_at)}</td>
                 </tr>
               ))}
             </tbody>
