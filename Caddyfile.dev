@@ -1,4 +1,4 @@
-:80 {
+whatsapp-group-analytics.luqmarqs.dev {
   @api path /api/*
   handle @api {
     uri strip_prefix /api
