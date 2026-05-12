@@ -21,20 +21,57 @@ const SESSION_DIR   = process.env.SESSION_DIR   ?? path.join(process.cwd(), 'ses
 const INSTANCE_NAME = process.env.INSTANCE_NAME ?? 'default'
 
 let userInitiatedLogout = false
+let logoutFallbackTimer: NodeJS.Timeout | null = null
 
 export function requestLogout() {
   userInitiatedLogout = true
-  sock?.logout().catch(() => {})
+  scheduleLogoutFallback()
+  if (sock) {
+    sock.logout().catch((err) => {
+      console.error('[wa] logout request failed', err)
+      clearSessionAndRestart('logout request fallback').catch((e) =>
+        console.error('[wa] restart after logout failure failed', e),
+      )
+    })
+  } else {
+    clearSessionAndRestart('logout request without socket').catch((e) =>
+      console.error('[wa] restart after logout request failed', e),
+    )
+  }
+}
+
+function scheduleLogoutFallback() {
+  if (logoutFallbackTimer) clearTimeout(logoutFallbackTimer)
+  logoutFallbackTimer = setTimeout(() => {
+    if (!userInitiatedLogout) return
+    userInitiatedLogout = false
+    clearSessionAndRestart('logout request timeout fallback').catch((err) =>
+      console.error('[wa] restart after logout timeout failed', err),
+    )
+  }, 5_000)
+}
+
+async function clearSessionAndRestart(reason: string) {
+  if (logoutFallbackTimer) {
+    clearTimeout(logoutFallbackTimer)
+    logoutFallbackTimer = null
+  }
+  console.log(`[wa] ${reason} - clearing session and restarting for new QR`)
+  sock = null
+  await redis.del(`wa:qr:${INSTANCE_NAME}`)
+  await rm(SESSION_DIR, { recursive: true, force: true })
+  await mkdir(SESSION_DIR, { recursive: true })
+  setTimeout(() => startWhatsApp(), 1_000)
 }
 
 /**
  * Fetches the current participant list for a group directly from WhatsApp
  * and upserts all contacts. Works even for announcement groups where no
- * messages are sent — covers members who have never spoken.
+ * messages are sent - covers members who have never spoken.
  */
 export async function resyncGroupParticipants(groupJid: string): Promise<void> {
   if (!sock || !instanceId) {
-    console.log(`[resync] skipped — not connected (${groupJid})`)
+    console.log(`[resync] skipped - not connected (${groupJid})`)
     return
   }
   try {
@@ -98,8 +135,8 @@ export async function startWhatsApp() {
     if (qr) {
       try {
         const png = await QRCode.toDataURL(qr)
-        await redis.set(`wa:qr:${INSTANCE_NAME}`, png, 'EX', 120)
-        console.log('[wa] QR code ready — scan via the web dashboard')
+        await redis.set(`wa:qr:${INSTANCE_NAME}`, png, 'EX', 300)
+        console.log('[wa] QR code ready - scan via the web dashboard')
       } catch (err) {
         console.error('[wa] QR generation error', err)
       }
@@ -109,20 +146,16 @@ export async function startWhatsApp() {
       const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode
       const loggedOut = statusCode === DisconnectReason.loggedOut
 
-      console.log(`[wa] connection closed — statusCode=${statusCode} loggedOut=${loggedOut}`)
+      console.log(`[wa] connection closed - statusCode=${statusCode} loggedOut=${loggedOut}`)
       await updateInstanceStatus(instanceId!, 'disconnected')
 
-      if (!loggedOut) {
-        console.log('[wa] reconnecting in 5s…')
+      if (!loggedOut && !userInitiatedLogout) {
+        console.log('[wa] reconnecting in 5s...')
         setTimeout(() => startWhatsApp(), 5_000)
-      } else if (userInitiatedLogout) {
-        userInitiatedLogout = false
-        console.log('[wa] user logout — clearing session and restarting for new QR')
-        await rm(SESSION_DIR, { recursive: true, force: true })
-        await mkdir(SESSION_DIR, { recursive: true })
-        setTimeout(() => startWhatsApp(), 1_000)
       } else {
-        console.log('[wa] logged out externally — restart container to re-authenticate')
+        const reason = userInitiatedLogout ? 'user logout' : 'logged out externally'
+        userInitiatedLogout = false
+        await clearSessionAndRestart(reason)
       }
     }
 
@@ -135,7 +168,7 @@ export async function startWhatsApp() {
     }
   })
 
-  // ── Incoming messages ──────────────────────────────────────────────────────
+  // Incoming messages
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return
 
@@ -150,7 +183,7 @@ export async function startWhatsApp() {
     }
   })
 
-  // ── Group metadata changes ─────────────────────────────────────────────────
+  // Group metadata changes
   sock.ev.on('groups.upsert', async (groups) => {
     for (const meta of groups) {
       await upsertGroup(meta.id, meta, instanceId!).catch((err) =>
@@ -190,7 +223,7 @@ export async function startWhatsApp() {
     }
   })
 
-  // ── Participant changes ────────────────────────────────────────────────────
+  // Participant changes
   sock.ev.on('group-participants.update', async ({ id, participants, action, author }) => {
     await handleParticipantUpdate(instanceId!, id, participants, action, author).catch((err) =>
       console.error('[wa] participant handler error', err),
