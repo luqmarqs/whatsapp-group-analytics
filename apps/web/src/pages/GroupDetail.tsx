@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, Users, MessageSquare, Link2, Download, RefreshCw } from 'lucide-react'
+import { ArrowLeft, Users, MessageSquare, Link2, Download, RefreshCw, ListChecks } from 'lucide-react'
 import ActivityChart from '../components/ActivityChart'
 import MemberEvolutionChart from '../components/MemberEvolutionChart'
 import Badge from '../components/Badge'
-import { api, GroupDetail as GD, MemberEvolution } from '../lib/api'
+import { api, GroupDetail as GD, MemberEvolution, Poll } from '../lib/api'
 
 interface Member {
   id: string
@@ -52,6 +52,7 @@ export default function GroupDetail() {
   const { id } = useParams<{ id: string }>()
   const [data, setData]           = useState<GD | null>(null)
   const [evolution, setEvolution] = useState<MemberEvolution[]>([])
+  const [polls, setPolls]         = useState<Poll[]>([])
   const [members, setMembers]     = useState<Member[]>([])
   const [loadingCsv, setLoadingCsv] = useState(false)
   const [loading, setLoading]     = useState(true)
@@ -62,8 +63,9 @@ export default function GroupDetail() {
     Promise.all([
       api.get<GD>(`/whatsapp/groups/${id}`),
       api.get<MemberEvolution[]>(`/whatsapp/groups/${id}/member-evolution?days=90`),
+      api.get<Poll[]>(`/whatsapp/polls?group_id=${encodeURIComponent(id)}&days=365`),
     ])
-      .then(([detail, evo]) => { setData(detail); setEvolution(evo) })
+      .then(([detail, evo, pollList]) => { setData(detail); setEvolution(evo); setPolls(pollList) })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
   }, [id])
@@ -159,6 +161,52 @@ export default function GroupDetail() {
         {metrics.length > 0
           ? <ActivityChart data={[...metrics].reverse()} />
           : <p className="text-sm text-gray-400">Sem dados de métricas ainda.</p>}
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
+            <ListChecks size={14} className="text-indigo-500" /> Enquetes
+          </h2>
+          <span className="text-xs text-gray-400">{polls.length} capturadas</span>
+        </div>
+        {polls.length > 0 ? (
+          <div className="space-y-4">
+            {polls.slice(0, 10).map((poll) => {
+              const maxVotes = Math.max(...poll.options.map((o) => o.vote_count), 1)
+              return (
+                <div key={poll.id} className="border-b border-gray-100 last:border-0 pb-4 last:pb-0">
+                  <div className="flex items-start justify-between gap-4 mb-2">
+                    <p className="text-sm font-semibold text-gray-800">{poll.title}</p>
+                    <div className="text-right shrink-0">
+                      <p className="text-xs font-semibold text-gray-700">{poll.total_voters.toLocaleString('pt-BR')} votantes</p>
+                      <p className="text-[11px] text-gray-400">{new Date(poll.created_at_whatsapp).toLocaleDateString('pt-BR')}</p>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    {poll.options.map((option) => {
+                      const pct = poll.total_voters > 0 ? Math.round((option.vote_count / poll.total_voters) * 100) : 0
+                      return (
+                        <div key={option.id} className="grid grid-cols-[minmax(90px,180px)_1fr_70px] items-center gap-3 text-xs">
+                          <span className="text-gray-600 truncate">{option.option_text || 'Opção sem texto'}</span>
+                          <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-indigo-500 rounded-full"
+                              style={{ width: `${Math.max((option.vote_count / maxVotes) * 100, option.vote_count > 0 ? 4 : 0)}%` }}
+                            />
+                          </div>
+                          <span className="text-right text-gray-500">{option.vote_count.toLocaleString('pt-BR')} · {pct}%</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-400">Nenhuma enquete capturada neste grupo ainda.</p>
+        )}
       </div>
 
       {/* Links + Alertas */}

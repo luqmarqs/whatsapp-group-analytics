@@ -145,6 +145,135 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
     return rows
   })
 
+  fastify.get('/monitored-members', { preHandler: authenticate }, async (request, reply) => {
+    const scope = await instanceScope(request as any, 1)
+
+    const { rows } = await pool.query(`
+      SELECT
+        g.id AS group_id,
+        g.name AS group_name,
+        g.group_jid,
+        m.id,
+        m.role,
+        m.is_active,
+        m.joined_at,
+        m.left_at,
+        c.phone,
+        c.name,
+        c.raw_jid,
+        c.jid_server,
+        c.updated_at AS contact_updated_at
+      FROM whatsapp_group_members m
+      JOIN whatsapp_groups g ON g.id = m.group_id
+      LEFT JOIN whatsapp_contacts c
+        ON c.instance_id = g.instance_id
+       AND c.member_hash = m.member_hash
+      WHERE g.is_monitored = true
+        AND g.is_available = true
+        ${scope.clause}
+      ORDER BY g.name ASC NULLS LAST, g.group_jid ASC, m.is_active DESC, c.name ASC NULLS LAST, c.phone ASC NULLS LAST
+    `, scope.values)
+
+    return rows
+  })
+
+  fastify.get('/polls', { preHandler: authenticate }, async (request, reply) => {
+    const query = request.query as { days?: string; group_id?: string }
+    const days = Math.min(Math.max(parseInt(query.days ?? '30'), 1), 365)
+    const scope = await instanceScope(request as any, 2)
+    const values: unknown[] = [days, ...scope.values]
+    let groupClause = ''
+
+    if (query.group_id) {
+      values.push(query.group_id)
+      groupClause = `AND p.group_id = $${values.length}::uuid`
+    }
+
+    const { rows } = await pool.query(`
+      SELECT
+        p.id,
+        p.group_id,
+        g.name AS group_name,
+        g.group_jid,
+        p.message_id,
+        p.title,
+        p.selectable_options_count,
+        p.poll_type,
+        p.poll_content_type,
+        p.created_at_whatsapp,
+        p.updated_at,
+        COALESCE(voters.total_voters, 0)::int AS total_voters,
+        COALESCE(votes.total_votes, 0)::int AS total_votes,
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'id', o.id,
+              'option_index', o.option_index,
+              'option_text', o.option_text,
+              'vote_count', o.vote_count
+            )
+            ORDER BY o.option_index
+          ) FILTER (WHERE o.id IS NOT NULL),
+          '[]'::json
+        ) AS options
+      FROM whatsapp_polls p
+      JOIN whatsapp_groups g ON g.id = p.group_id
+      LEFT JOIN whatsapp_poll_options o ON o.poll_id = p.id
+      LEFT JOIN (
+        SELECT poll_id, COUNT(*)::int AS total_voters
+        FROM whatsapp_poll_updates
+        WHERE cardinality(selected_option_hashes) > 0
+        GROUP BY poll_id
+      ) voters ON voters.poll_id = p.id
+      LEFT JOIN (
+        SELECT poll_id, COUNT(*)::int AS total_votes
+        FROM whatsapp_poll_votes
+        GROUP BY poll_id
+      ) votes ON votes.poll_id = p.id
+      WHERE p.created_at_whatsapp >= NOW() - ($1::int * INTERVAL '1 day')
+        AND g.is_monitored = true
+        AND g.is_available = true
+        ${scope.clause}
+        ${groupClause}
+      GROUP BY p.id, g.name, g.group_jid, voters.total_voters, votes.total_votes
+      ORDER BY p.created_at_whatsapp DESC
+      LIMIT 200
+    `, values)
+
+    return rows
+  })
+
+  fastify.get('/polls/:id/votes', { preHandler: authenticate }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    const scope = await instanceScope(request as any, 2)
+
+    const { rows } = await pool.query(`
+      SELECT
+        p.id AS poll_id,
+        p.title,
+        g.name AS group_name,
+        g.group_jid,
+        o.option_text,
+        v.voted_at,
+        c.name,
+        c.phone,
+        c.raw_jid,
+        c.jid_server
+      FROM whatsapp_poll_votes v
+      JOIN whatsapp_polls p ON p.id = v.poll_id
+      JOIN whatsapp_groups g ON g.id = p.group_id
+      JOIN whatsapp_poll_options o ON o.id = v.option_id
+      LEFT JOIN whatsapp_contacts c
+        ON c.instance_id = p.instance_id
+       AND c.member_hash = v.voter_hash
+      WHERE p.id = $1::uuid
+        ${scope.clause}
+      ORDER BY o.option_index ASC, c.name ASC NULLS LAST, c.phone ASC NULLS LAST
+    `, [id, ...scope.values])
+
+    return rows
+  })
+
   // ─── Atualizar is_monitored de um grupo ───────────────────────────────────
   fastify.patch('/groups/:id', { preHandler: authenticate }, async (request, reply) => {
     const { id } = request.params as { id: string }

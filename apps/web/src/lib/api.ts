@@ -127,6 +127,30 @@ export interface TopGroup {
   engagement_rate: number
 }
 
+export interface PollOption {
+  id: string
+  option_index: number
+  option_text: string
+  vote_count: number
+}
+
+export interface Poll {
+  id: string
+  group_id: string
+  group_name: string | null
+  group_jid: string
+  message_id: string
+  title: string
+  selectable_options_count: number | null
+  poll_type: string | null
+  poll_content_type: string | null
+  created_at_whatsapp: string
+  updated_at: string
+  total_voters: number
+  total_votes: number
+  options: PollOption[]
+}
+
 export interface Link {
   id: string
   url_hash: string

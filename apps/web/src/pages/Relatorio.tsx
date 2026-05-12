@@ -3,19 +3,33 @@ import { Link } from 'react-router-dom'
 import {
   Users, MessageSquare, UserPlus, UserMinus, TrendingUp, TrendingDown,
   Play, RefreshCw, AlertTriangle, Link2, Smartphone, Clock, Radio,
-  Download,
+  Download, ListChecks,
 } from 'lucide-react'
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Legend, Cell,
 } from 'recharts'
 import {
-  api, Overview, Activity as ActivityType, TopGroup, Alert, Link as LinkType, PeakHour,
+  api, Overview, Activity as ActivityType, TopGroup, Alert, Link as LinkType, PeakHour, Poll,
 } from '../lib/api'
 import Badge from '../components/Badge'
 import { useInstanceFilter } from '../contexts/InstanceFilterContext'
 
 interface InstanceStatus { status: string; qr: string | null }
+interface MonitoredMember {
+  group_id: string
+  group_name: string | null
+  group_jid: string
+  id: string
+  role: string
+  is_active: boolean
+  joined_at: string | null
+  left_at: string | null
+  phone: string | null
+  name: string | null
+  raw_jid: string | null
+  jid_server: string | null
+}
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 function fmt(date: string) {
@@ -90,6 +104,47 @@ function downloadGroupsReportCsv(topGroups: TopGroup[]) {
   URL.revokeObjectURL(url)
 }
 
+function downloadMonitoredMembersCsv(members: MonitoredMember[]) {
+  const headers = [
+    'Grupo',
+    'JID do grupo',
+    'Nome',
+    'Telefone',
+    'Identificador WhatsApp',
+    'Tipo ID',
+    'Papel',
+    'Status',
+    'Entrou em',
+    'Saiu em',
+  ]
+
+  const rows = members.map((m) => [
+    m.group_name ?? m.group_jid,
+    csvText(m.group_jid),
+    m.name ?? '',
+    m.phone ? `="${m.phone}"` : '',
+    m.raw_jid ? `="${m.raw_jid}"` : '',
+    m.jid_server ?? '',
+    m.role,
+    m.is_active ? 'Ativo' : 'Inativo',
+    m.joined_at ? new Date(m.joined_at).toLocaleDateString('pt-BR') : '',
+    m.left_at ? new Date(m.left_at).toLocaleDateString('pt-BR') : '',
+  ])
+
+  const csv = [headers, ...rows]
+    .map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(';'))
+    .join('\r\n')
+
+  const stamp = new Date().toISOString().slice(0, 10)
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `contatos-grupos-monitorados-${stamp}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 function KpiCard({
   label, value, sub, icon: Icon, accent, trend: trendPct,
 }: {
@@ -136,9 +191,11 @@ export default function Relatorio() {
   const [alerts, setAlerts]         = useState<Alert[]>([])
   const [links, setLinks]           = useState<LinkType[]>([])
   const [peakHours, setPeakHours]   = useState<PeakHour[]>([])
+  const [polls, setPolls]           = useState<Poll[]>([])
   const [instance, setInstance]     = useState<InstanceStatus | null>(null)
   const [loading, setLoading]       = useState(true)
   const [running, setRunning]       = useState(false)
+  const [downloadingMembers, setDownloadingMembers] = useState(false)
   const [runMsg, setRunMsg]         = useState('')
 
   const load = useCallback(async () => {
@@ -150,13 +207,14 @@ export default function Relatorio() {
       return qs ? `${path}?${qs}` : path
     }
     try {
-      const [ov, act, top, al, lk, ph, inst] = await Promise.allSettled([
+      const [ov, act, top, al, lk, ph, pollList, inst] = await Promise.allSettled([
         api.get<Overview>(withInstance('/whatsapp/overview')),
         api.get<ActivityType[]>(withInstance('/whatsapp/activity', { days: '30' })),
         api.get<TopGroup[]>(withInstance('/whatsapp/top-groups', { days: '30' })),
         api.get<Alert[]>(withInstance('/whatsapp/alerts')),
         api.get<LinkType[]>(withInstance('/whatsapp/links')),
         api.get<PeakHour[]>(withInstance('/whatsapp/peak-hours', { days: '7' })),
+        api.get<Poll[]>(withInstance('/whatsapp/polls', { days: '30' })),
         api.get<InstanceStatus>(withInstance('/whatsapp/instance')),
       ])
       if (ov.status === 'fulfilled')       setOverview(ov.value)
@@ -165,6 +223,7 @@ export default function Relatorio() {
       if (al.status === 'fulfilled')       setAlerts(al.value)
       if (lk.status === 'fulfilled')       setLinks(lk.value)
       if (ph.status === 'fulfilled')       setPeakHours(ph.value)
+      if (pollList.status === 'fulfilled') setPolls(pollList.value)
       if (inst.status === 'fulfilled')     setInstance(inst.value)
     } finally { setLoading(false) }
   }, [selectedInstanceId])
@@ -183,6 +242,20 @@ export default function Relatorio() {
     } catch (e: unknown) {
       setRunMsg(e instanceof Error ? e.message : 'Erro')
     } finally { setRunning(false) }
+  }
+
+  async function downloadAllMonitoredMembers() {
+    if (downloadingMembers) return
+    setDownloadingMembers(true)
+    try {
+      const qs = selectedInstanceId ? `?instance_id=${encodeURIComponent(selectedInstanceId)}` : ''
+      const members = await api.get<MonitoredMember[]>(`/whatsapp/monitored-members${qs}`)
+      downloadMonitoredMembersCsv(members)
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : 'Erro ao baixar contatos')
+    } finally {
+      setDownloadingMembers(false)
+    }
   }
 
   // ── derived ──────────────────────────────────────────────────────────────
@@ -237,7 +310,7 @@ export default function Relatorio() {
             </p>
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center justify-end gap-3">
           {runMsg && <p className="text-xs text-green-600 max-w-xs text-right">{runMsg}</p>}
           <button
             onClick={() => downloadGroupsReportCsv(topGroups)}
@@ -245,7 +318,15 @@ export default function Relatorio() {
             className="flex items-center gap-1.5 px-3 py-2 border border-gray-200 hover:bg-gray-50 disabled:opacity-50 text-gray-600 text-xs font-medium rounded-lg transition-colors shadow-sm"
           >
             <Download size={13} />
-            Baixar CSV
+            Baixar grupos CSV
+          </button>
+          <button
+            onClick={downloadAllMonitoredMembers}
+            disabled={topGroups.length === 0 || downloadingMembers}
+            className="flex items-center gap-1.5 px-3 py-2 border border-gray-200 hover:bg-gray-50 disabled:opacity-50 text-gray-600 text-xs font-medium rounded-lg transition-colors shadow-sm"
+          >
+            {downloadingMembers ? <RefreshCw size={13} className="animate-spin" /> : <Download size={13} />}
+            Baixar contatos CSV
           </button>
           <button onClick={runJobs} disabled={running}
             className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-colors shadow-sm">
@@ -353,6 +434,57 @@ export default function Relatorio() {
             </div>
           ) : <p className="text-sm text-gray-400">Sem dados.</p>}
         </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
+            <ListChecks size={14} className="text-indigo-500" /> Enquetes recentes
+          </h2>
+          <span className="text-xs text-gray-400">{polls.length} nos últimos 30d</span>
+        </div>
+        {polls.length > 0 ? (
+          <div className="space-y-4">
+            {polls.slice(0, 8).map((poll) => {
+              const maxVotes = Math.max(...poll.options.map((o) => o.vote_count), 1)
+              return (
+                <div key={poll.id} className="border-b border-gray-100 last:border-0 pb-4 last:pb-0">
+                  <div className="flex items-start justify-between gap-4 mb-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-gray-800 truncate">{poll.title}</p>
+                      <Link to={`/whatsapp/groups/${poll.group_id}`} className="text-xs text-indigo-500 hover:underline truncate block">
+                        {poll.group_name ?? poll.group_jid}
+                      </Link>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-xs font-semibold text-gray-700">{num(poll.total_voters)} votantes</p>
+                      <p className="text-[11px] text-gray-400">{new Date(poll.created_at_whatsapp).toLocaleDateString('pt-BR')}</p>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    {poll.options.map((option) => {
+                      const pct = poll.total_voters > 0 ? Math.round((option.vote_count / poll.total_voters) * 100) : 0
+                      return (
+                        <div key={option.id} className="grid grid-cols-[minmax(90px,180px)_1fr_70px] items-center gap-3 text-xs">
+                          <span className="text-gray-600 truncate">{option.option_text || 'Opção sem texto'}</span>
+                          <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-indigo-500 rounded-full"
+                              style={{ width: `${Math.max((option.vote_count / maxVotes) * 100, option.vote_count > 0 ? 4 : 0)}%` }}
+                            />
+                          </div>
+                          <span className="text-right text-gray-500">{num(option.vote_count)} · {pct}%</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-400">Nenhuma enquete capturada nos grupos monitorados ainda.</p>
+        )}
       </div>
 
       {/* Top grupos por mensagens + Alertas */}

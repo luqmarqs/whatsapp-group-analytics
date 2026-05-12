@@ -15,6 +15,7 @@ import redis from './redis'
 import { syncGroups, upsertGroup } from './handlers/groups'
 import { handleMessage } from './handlers/messages'
 import { handleParticipantUpdate } from './handlers/members'
+import { handlePollCreation, handlePollUpdates } from './handlers/polls'
 import { loadMonitoredGroups } from './utils/monitoring'
 
 const SESSION_DIR   = process.env.SESSION_DIR   ?? path.join(process.cwd(), 'sessions')
@@ -189,10 +190,26 @@ export async function startWhatsApp() {
     for (const msg of messages) {
       const jid = msg.key.remoteJid
       if (!jid || !isJidGroup(jid)) continue
+
+      await handlePollCreation(msg, jid, instanceId!).catch((err) =>
+        console.error('[wa] poll creation handler error', err),
+      )
+      await handlePollUpdates(msg.key, msg.pollUpdates, instanceId!).catch((err) =>
+        console.error('[wa] poll update handler error', err),
+      )
       if (msg.key.fromMe) continue
 
       await handleMessage(msg, jid, instanceId!).catch((err) =>
         console.error('[wa] message handler error', err),
+      )
+    }
+  })
+
+  sock.ev.on('messages.update', async (updates) => {
+    for (const update of updates) {
+      if (!update.key.remoteJid || !isJidGroup(update.key.remoteJid)) continue
+      await handlePollUpdates(update.key, update.update.pollUpdates, instanceId!).catch((err) =>
+        console.error('[wa] poll update handler error', err),
       )
     }
   })
