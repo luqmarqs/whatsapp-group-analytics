@@ -1,16 +1,19 @@
 import pool from '../db'
 import redis from '../redis'
-import { hashJid, phoneFromJid } from '../utils/hash'
+import { hashJid, phoneFromJid, serverFromJid } from '../utils/hash'
 import { isMonitored } from '../utils/monitoring'
 
-async function upsertContact(instanceId: string, memberHash: string, phone: string) {
+async function upsertContact(instanceId: string, memberHash: string, rawJid: string) {
+  const phone = phoneFromJid(rawJid)
   await pool.query(
-    `INSERT INTO whatsapp_contacts (instance_id, member_hash, phone)
-     VALUES ($1, $2, $3)
+    `INSERT INTO whatsapp_contacts (instance_id, member_hash, phone, raw_jid, jid_server)
+     VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (instance_id, member_hash) DO UPDATE SET
-       phone      = EXCLUDED.phone,
+       phone      = COALESCE(EXCLUDED.phone, whatsapp_contacts.phone),
+       raw_jid    = COALESCE(EXCLUDED.raw_jid, whatsapp_contacts.raw_jid),
+       jid_server = COALESCE(EXCLUDED.jid_server, whatsapp_contacts.jid_server),
        updated_at = NOW()`,
-    [instanceId, memberHash, phone],
+    [instanceId, memberHash, phone, rawJid, serverFromJid(rawJid)],
   )
 }
 
@@ -37,8 +40,7 @@ export async function handleParticipantUpdate(
 
   for (const participantJid of participants) {
     const memberHash = hashJid(participantJid)
-    const phone = phoneFromJid(participantJid)
-    if (phone) await upsertContact(instanceId, memberHash, phone)
+    await upsertContact(instanceId, memberHash, participantJid)
 
     // Deduplicate via Redis (1h TTL per event)
     const dedupKey = `event:${groupId}:${memberHash}:${eventType}:${Math.floor(Date.now() / 3_600_000)}`

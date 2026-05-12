@@ -1,7 +1,7 @@
 import { proto } from '@whiskeysockets/baileys'
 import pool from '../db'
 import redis from '../redis'
-import { hashJid, phoneFromJid } from '../utils/hash'
+import { hashJid, phoneFromJid, serverFromJid } from '../utils/hash'
 import { extractLinks } from '../utils/links'
 import { isMonitored } from '../utils/monitoring'
 
@@ -78,15 +78,17 @@ export async function handleMessage(msg: WAMessage, groupJid: string, instanceId
 
   // Update contact with phone and latest pushName (non-blocking, only for real user JIDs)
   const senderPhone = phoneFromJid(senderJid)
-  if (senderPhone) {
+  if (senderJid) {
     pool.query(
-      `INSERT INTO whatsapp_contacts (instance_id, member_hash, phone, name)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO whatsapp_contacts (instance_id, member_hash, phone, name, raw_jid, jid_server)
+       VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (instance_id, member_hash) DO UPDATE SET
-         phone      = EXCLUDED.phone,
+         phone      = COALESCE(EXCLUDED.phone, whatsapp_contacts.phone),
          name       = COALESCE(EXCLUDED.name, whatsapp_contacts.name),
+         raw_jid    = COALESCE(EXCLUDED.raw_jid, whatsapp_contacts.raw_jid),
+         jid_server = COALESCE(EXCLUDED.jid_server, whatsapp_contacts.jid_server),
          updated_at = NOW()`,
-      [instanceId, senderHash, senderPhone, msg.pushName ?? null],
+      [instanceId, senderHash, senderPhone, msg.pushName ?? null, senderJid, serverFromJid(senderJid)],
     ).catch(() => { /* non-critical */ })
   }
   const msgType = getMessageType(msg)

@@ -1,16 +1,19 @@
 import { WASocket } from '@whiskeysockets/baileys'
 import pool from '../db'
-import { hashJid, phoneFromJid } from '../utils/hash'
+import { hashJid, phoneFromJid, serverFromJid } from '../utils/hash'
 
-async function upsertContact(instanceId: string, memberHash: string, phone: string, name?: string | null) {
+async function upsertContact(instanceId: string, memberHash: string, rawJid: string, name?: string | null) {
+  const phone = phoneFromJid(rawJid)
   await pool.query(
-    `INSERT INTO whatsapp_contacts (instance_id, member_hash, phone, name)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO whatsapp_contacts (instance_id, member_hash, phone, name, raw_jid, jid_server)
+     VALUES ($1, $2, $3, $4, $5, $6)
      ON CONFLICT (instance_id, member_hash) DO UPDATE SET
-       phone      = EXCLUDED.phone,
+       phone      = COALESCE(EXCLUDED.phone, whatsapp_contacts.phone),
        name       = COALESCE(EXCLUDED.name, whatsapp_contacts.name),
+       raw_jid    = COALESCE(EXCLUDED.raw_jid, whatsapp_contacts.raw_jid),
+       jid_server = COALESCE(EXCLUDED.jid_server, whatsapp_contacts.jid_server),
        updated_at = NOW()`,
-    [instanceId, memberHash, phone, name ?? null],
+    [instanceId, memberHash, phone, name ?? null, rawJid, serverFromJid(rawJid)],
   )
 }
 
@@ -65,12 +68,20 @@ export async function upsertGroup(
   // Only store individual members for monitored groups — no wasted storage
   if (is_monitored && meta.participants && meta.participants.length > 0) {
     const activeMemberHashes: string[] = []
+    let contactsWithPhone = 0
+    let contactsWithoutPhone = 0
 
     for (const p of meta.participants) {
-      const memberHash = hashJid(p.id)
+      // Em comunidades (grupos de aviso), o WhatsApp oculta o número na propriedade 'id' (LID).
+      // Mas se o bot for admin, o Baileys costuma disponibilizar o número real na propriedade 'jid'.
+      const actualJid = (p as any).jid || p.id
+      const memberHash = hashJid(actualJid)
       activeMemberHashes.push(memberHash)
-      const phone = phoneFromJid(p.id)
-      if (phone) await upsertContact(instanceId, memberHash, phone, (p as { notify?: string }).notify ?? null)
+
+      const phone = phoneFromJid(actualJid)
+      if (phone) contactsWithPhone += 1
+      else contactsWithoutPhone += 1
+      await upsertContact(instanceId, memberHash, actualJid, (p as { notify?: string }).notify ?? null)
       await pool.query(
         `INSERT INTO whatsapp_group_members (group_id, member_hash, role, is_active)
          VALUES ($1, $2, $3, true)
@@ -89,6 +100,13 @@ export async function upsertGroup(
          AND NOT (member_hash = ANY($2::text[]))`,
       [groupId, activeMemberHashes],
     )
+
+    if (contactsWithoutPhone > 0) {
+      console.log(
+        `[groups] ${jid}: ${contactsWithPhone}/${meta.participants.length} participant phone(s) resolved; ` +
+        `${contactsWithoutPhone} participant(s) came without @s.whatsapp.net`,
+      )
+    }
   }
 
   return groupId

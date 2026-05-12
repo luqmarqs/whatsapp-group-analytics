@@ -21,3 +21,8 @@ export function phoneFromJid(jid: string): string | null {
   if (!/^\d{7,15}$/.test(bare)) return null                 // sanity: only digits, 7-15 chars
   return bare
 }
+
+export function serverFromJid(jid: string): string | null {
+  const match = jid.match(/@([^:]+)$/)
+  return match?.[1] ?? null
+}

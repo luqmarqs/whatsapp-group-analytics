@@ -282,6 +282,8 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
         m.left_at,
         c.phone,
         c.name,
+        c.raw_jid,
+        c.jid_server,
         c.updated_at AS contact_updated_at
       FROM whatsapp_group_members m
       JOIN whatsapp_groups g ON g.id = m.group_id
