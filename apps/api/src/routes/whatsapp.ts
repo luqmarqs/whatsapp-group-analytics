@@ -23,6 +23,20 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
     return { ...instance, qr }
   })
 
+  // ─── Desconectar WhatsApp (user-initiated logout → limpa sessão → novo QR) ─
+  fastify.post('/disconnect', { preHandler: authenticate }, async (request, reply) => {
+    const user = request.user as { id: string; role: string }
+    const { rows } = await pool.query(
+      `SELECT name FROM whatsapp_instances
+       WHERE ($1 = 'admin' OR user_id = $2::uuid)
+       ORDER BY created_at LIMIT 1`,
+      [user.role, user.id],
+    )
+    if (!rows[0]) return reply.status(404).send({ error: 'Nenhuma instância encontrada' })
+    await redis.publish(`wa:logout:${rows[0].name}`, 'logout')
+    return { ok: true }
+  })
+
   // ─── Overview KPIs ────────────────────────────────────────────────────────
   fastify.get('/overview', { preHandler: authenticate }, async (request, reply) => {
     const now = new Date()

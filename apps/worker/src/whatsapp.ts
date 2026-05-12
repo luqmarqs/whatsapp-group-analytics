@@ -9,14 +9,23 @@ import { Boom } from '@hapi/boom'
 import QRCode from 'qrcode'
 import pino from 'pino'
 import path from 'path'
+import { rm, mkdir } from 'fs/promises'
 import pool from './db'
 import redis from './redis'
 import { syncGroups, upsertGroup } from './handlers/groups'
 import { handleMessage } from './handlers/messages'
 import { handleParticipantUpdate } from './handlers/members'
 
-const SESSION_DIR = process.env.SESSION_DIR ?? path.join(process.cwd(), 'sessions')
+const SESSION_DIR   = process.env.SESSION_DIR   ?? path.join(process.cwd(), 'sessions')
 const INSTANCE_NAME = process.env.INSTANCE_NAME ?? 'default'
+
+// Set to true when logout is user-initiated — clears session and shows new QR
+let userInitiatedLogout = false
+
+export function requestLogout() {
+  userInitiatedLogout = true
+  sock?.logout().catch(() => {})
+}
 
 let sock: WASocket | null = null
 let instanceId: string | null = null
@@ -87,8 +96,14 @@ export async function startWhatsApp() {
       if (!loggedOut) {
         console.log('[wa] reconnecting in 5s…')
         setTimeout(() => startWhatsApp(), 5_000)
+      } else if (userInitiatedLogout) {
+        userInitiatedLogout = false
+        console.log('[wa] user logout — clearing session and restarting for new QR')
+        await rm(SESSION_DIR, { recursive: true, force: true })
+        await mkdir(SESSION_DIR, { recursive: true })
+        setTimeout(() => startWhatsApp(), 1_000)
       } else {
-        console.log('[wa] logged out — delete sessions dir and restart to re-authenticate')
+        console.log('[wa] logged out externally — restart container to re-authenticate')
       }
     }
 
