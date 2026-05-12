@@ -9,7 +9,7 @@ import { Boom } from '@hapi/boom'
 import QRCode from 'qrcode'
 import pino from 'pino'
 import path from 'path'
-import { rm, mkdir } from 'fs/promises'
+import { mkdir, readdir, rm } from 'fs/promises'
 import pool from './db'
 import redis from './redis'
 import { syncGroups, upsertGroup } from './handlers/groups'
@@ -59,9 +59,23 @@ async function clearSessionAndRestart(reason: string) {
   console.log(`[wa] ${reason} - clearing session and restarting for new QR`)
   sock = null
   await redis.del(`wa:qr:${INSTANCE_NAME}`)
-  await rm(SESSION_DIR, { recursive: true, force: true })
-  await mkdir(SESSION_DIR, { recursive: true })
+  await clearSessionFiles()
   setTimeout(() => startWhatsApp(), 1_000)
+}
+
+async function clearSessionFiles() {
+  await mkdir(SESSION_DIR, { recursive: true })
+
+  const entries = await readdir(SESSION_DIR, { withFileTypes: true }).catch((err: NodeJS.ErrnoException) => {
+    if (err.code === 'ENOENT') return []
+    throw err
+  })
+
+  await Promise.all(
+    entries.map((entry) =>
+      rm(path.join(SESSION_DIR, entry.name), { recursive: true, force: true }),
+    ),
+  )
 }
 
 /**
