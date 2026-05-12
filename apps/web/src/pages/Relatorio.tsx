@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import {
   Users, MessageSquare, UserPlus, UserMinus, TrendingUp, TrendingDown,
   Play, RefreshCw, AlertTriangle, Link2, Smartphone, Clock, Radio,
+  Download,
 } from 'lucide-react'
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -25,6 +26,68 @@ function trend(cur: number, prev: number) {
   if (prev === 0) return null
   const pct = Math.round(((cur - prev) / prev) * 100)
   return pct
+}
+
+function csvText(value: string | number | null | undefined) {
+  if (value == null) return ''
+  const text = String(value)
+  return /^[\d+@.-]+$/.test(text) ? `="${text}"` : text
+}
+
+function downloadGroupsReportCsv(topGroups: TopGroup[]) {
+  const headers = [
+    'Grupo',
+    'JID do grupo',
+    'Membros atuais',
+    'Mensagens 30d',
+    'Mensagens 7d',
+    'Mensagens 7d anteriores',
+    'Variação mensagens 7d (%)',
+    'Entradas 30d',
+    'Saídas 30d',
+    'Saldo membros 30d',
+    'Membros ativos no período',
+    'Taxa de engajamento (%)',
+    'Status',
+  ]
+
+  const rows = topGroups.map((g) => {
+    const variation = trend(g.messages_7d, g.messages_prev7d)
+    const status = g.messages_prev7d > 5 && g.messages_7d < g.messages_prev7d * 0.5
+      ? 'Em risco'
+      : g.messages_7d === 0
+        ? 'Sem atividade 7d'
+        : 'OK'
+
+    return [
+      g.name ?? '',
+      csvText(g.group_jid),
+      g.member_count,
+      g.messages_period,
+      g.messages_7d,
+      g.messages_prev7d,
+      variation ?? '',
+      g.joins_period,
+      g.leaves_period,
+      g.net_growth_period,
+      g.active_members_period,
+      g.engagement_rate,
+      status,
+    ]
+  })
+
+  const csv = [headers, ...rows]
+    .map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(';'))
+    .join('\r\n')
+
+  const stamp = new Date().toISOString().slice(0, 10)
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `relatorio-grupos-monitorados-${stamp}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 function KpiCard({
@@ -176,6 +239,14 @@ export default function Relatorio() {
         </div>
         <div className="flex items-center gap-3">
           {runMsg && <p className="text-xs text-green-600 max-w-xs text-right">{runMsg}</p>}
+          <button
+            onClick={() => downloadGroupsReportCsv(topGroups)}
+            disabled={topGroups.length === 0}
+            className="flex items-center gap-1.5 px-3 py-2 border border-gray-200 hover:bg-gray-50 disabled:opacity-50 text-gray-600 text-xs font-medium rounded-lg transition-colors shadow-sm"
+          >
+            <Download size={13} />
+            Baixar CSV
+          </button>
           <button onClick={runJobs} disabled={running}
             className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-colors shadow-sm">
             {running ? <RefreshCw size={13} className="animate-spin" /> : <Play size={13} />}
