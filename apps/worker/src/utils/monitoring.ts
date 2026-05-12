@@ -10,7 +10,9 @@ export async function loadMonitoredGroups(): Promise<void> {
     `SELECT g.group_jid
      FROM whatsapp_groups g
      JOIN whatsapp_instances i ON i.id = g.instance_id
-     WHERE i.name = $1 AND g.is_monitored = true`,
+     WHERE i.name = $1
+       AND g.is_monitored = true
+       AND g.is_available = true`,
     [INSTANCE_NAME],
   )
   monitored = new Set(rows.map((r) => r.group_jid))

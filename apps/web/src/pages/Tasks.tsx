@@ -2,6 +2,7 @@ import { useEffect, useState, FormEvent } from 'react'
 import { Plus, ChevronDown, ChevronUp } from 'lucide-react'
 import Badge from '../components/Badge'
 import { api, Task, Group } from '../lib/api'
+import { useInstanceFilter } from '../contexts/InstanceFilterContext'
 
 function priorityVariant(p: string): 'red' | 'yellow' | 'blue' | 'gray' {
   if (p === 'high')   return 'red'
@@ -17,6 +18,7 @@ function statusVariant(s: string): 'green' | 'blue' | 'gray' | 'red' {
 }
 
 export default function Tasks() {
+  const { selectedInstanceId } = useInstanceFilter()
   const [tasks, setTasks]   = useState<Task[]>([])
   const [groups, setGroups] = useState<Group[]>([])
   const [loading, setLoading] = useState(true)
@@ -24,13 +26,16 @@ export default function Tasks() {
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ title: '', description: '', due_date: '', priority: 'medium', group_ids: [] as string[] })
 
+  const instanceParam = selectedInstanceId ? `?instance_id=${encodeURIComponent(selectedInstanceId)}` : ''
+
   const loadTasks = () =>
-    api.get<Task[]>('/whatsapp/tasks').then(setTasks).finally(() => setLoading(false))
+    api.get<Task[]>(`/whatsapp/tasks${instanceParam}`).then(setTasks).finally(() => setLoading(false))
 
   useEffect(() => {
+    setLoading(true)
     loadTasks()
-    api.get<Group[]>('/whatsapp/groups').then(setGroups)
-  }, [])
+    api.get<Group[]>(`/whatsapp/groups${selectedInstanceId ? `?instance_id=${encodeURIComponent(selectedInstanceId)}` : ''}`).then(setGroups)
+  }, [selectedInstanceId])
 
   const toggleGroup = (gid: string) => {
     setForm((f) => ({

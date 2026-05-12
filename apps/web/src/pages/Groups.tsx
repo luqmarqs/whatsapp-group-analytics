@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import Badge from '../components/Badge'
 import { api, Group } from '../lib/api'
+import { useInstanceFilter } from '../contexts/InstanceFilterContext'
 
 function fmt(date: string | null) {
   if (!date) return '—'
@@ -14,16 +15,20 @@ function fmt(date: string | null) {
 
 // ── Aba Monitorados ───────────────────────────────────────────────────────────
 function MonitoredTab() {
+  const { selectedInstanceId } = useInstanceFilter()
   const [groups, setGroups] = useState<Group[]>([])
   const [loading, setLoading]   = useState(true)
   const [q, setQ]               = useState('')
 
   const load = useCallback(() => {
     setLoading(true)
-    const params = q ? `?q=${encodeURIComponent(q)}` : ''
-    api.get<Group[]>(`/whatsapp/groups${params}`)
+    const params = new URLSearchParams()
+    if (q) params.set('q', q)
+    if (selectedInstanceId) params.set('instance_id', selectedInstanceId)
+    const qs = params.toString()
+    api.get<Group[]>(`/whatsapp/groups${qs ? `?${qs}` : ''}`)
       .then(setGroups).finally(() => setLoading(false))
-  }, [q])
+  }, [q, selectedInstanceId])
 
   useEffect(() => { load() }, [load])
 
@@ -93,6 +98,7 @@ function MonitoredTab() {
 
 // ── Aba Gerenciar ─────────────────────────────────────────────────────────────
 function ManageTab() {
+  const { selectedInstanceId } = useInstanceFilter()
   const [all, setAll]           = useState<Group[]>([])
   const [loading, setLoading]   = useState(true)
   const [saving, setSaving]     = useState(false)
@@ -102,13 +108,15 @@ function ManageTab() {
 
   const load = useCallback(() => {
     setLoading(true)
-    api.get<Group[]>('/whatsapp/groups?monitored=all')
+    const params = new URLSearchParams({ monitored: 'all' })
+    if (selectedInstanceId) params.set('instance_id', selectedInstanceId)
+    api.get<Group[]>(`/whatsapp/groups?${params.toString()}`)
       .then((list) => {
         setAll(list)
         setSelected(new Set(list.filter((g) => g.is_monitored).map((g) => g.id)))
       })
       .finally(() => setLoading(false))
-  }, [])
+  }, [selectedInstanceId])
 
   useEffect(() => { load() }, [load])
 

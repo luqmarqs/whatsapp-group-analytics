@@ -15,6 +15,7 @@ import redis from './redis'
 import { syncGroups, upsertGroup } from './handlers/groups'
 import { handleMessage } from './handlers/messages'
 import { handleParticipantUpdate } from './handlers/members'
+import { loadMonitoredGroups } from './utils/monitoring'
 
 const SESSION_DIR   = process.env.SESSION_DIR   ?? path.join(process.cwd(), 'sessions')
 const INSTANCE_NAME = process.env.INSTANCE_NAME ?? 'default'
@@ -130,6 +131,7 @@ export async function startWhatsApp() {
       console.log(`[wa] connected as ${jid}`)
       await updateInstanceStatus(instanceId!, 'connected', jid)
       await syncGroups(sock!, instanceId!)
+      await loadMonitoredGroups()
     }
   })
 
@@ -142,7 +144,7 @@ export async function startWhatsApp() {
       if (!jid || !isJidGroup(jid)) continue
       if (msg.key.fromMe) continue
 
-      await handleMessage(msg, jid).catch((err) =>
+      await handleMessage(msg, jid, instanceId!).catch((err) =>
         console.error('[wa] message handler error', err),
       )
     }
@@ -160,8 +162,8 @@ export async function startWhatsApp() {
   sock.ev.on('groups.update', async (updates) => {
     for (const update of updates) {
       const { rows } = await pool.query(
-        'SELECT id FROM whatsapp_groups WHERE group_jid = $1',
-        [update.id],
+        'SELECT id FROM whatsapp_groups WHERE instance_id = $1 AND group_jid = $2',
+        [instanceId!, update.id],
       )
       if (!rows[0]) continue
 
@@ -190,7 +192,7 @@ export async function startWhatsApp() {
 
   // ── Participant changes ────────────────────────────────────────────────────
   sock.ev.on('group-participants.update', async ({ id, participants, action, author }) => {
-    await handleParticipantUpdate(id, participants, action, author).catch((err) =>
+    await handleParticipantUpdate(instanceId!, id, participants, action, author).catch((err) =>
       console.error('[wa] participant handler error', err),
     )
   })

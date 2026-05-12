@@ -1,17 +1,16 @@
 import { WASocket } from '@whiskeysockets/baileys'
 import pool from '../db'
 import { hashJid, phoneFromJid } from '../utils/hash'
-import { isMonitored } from '../utils/monitoring'
 
-async function upsertContact(memberHash: string, phone: string, name?: string | null) {
+async function upsertContact(instanceId: string, memberHash: string, phone: string, name?: string | null) {
   await pool.query(
-    `INSERT INTO whatsapp_contacts (member_hash, phone, name)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (member_hash) DO UPDATE SET
+    `INSERT INTO whatsapp_contacts (instance_id, member_hash, phone, name)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (instance_id, member_hash) DO UPDATE SET
        phone      = EXCLUDED.phone,
        name       = COALESCE(EXCLUDED.name, whatsapp_contacts.name),
        updated_at = NOW()`,
-    [memberHash, phone, name ?? null],
+    [instanceId, memberHash, phone, name ?? null],
   )
 }
 
@@ -27,6 +26,13 @@ export async function syncGroups(sock: WASocket, instanceId: string) {
     return
   }
 
+  await pool.query(
+    `UPDATE whatsapp_groups
+     SET is_available = false, updated_at = NOW()
+     WHERE instance_id = $1`,
+    [instanceId],
+  )
+
   for (const [jid, meta] of Object.entries(groups)) {
     await upsertGroup(jid, meta, instanceId)
   }
@@ -41,12 +47,14 @@ export async function upsertGroup(
 ) {
   // Always upsert group metadata (needed for selection UI)
   const { rows } = await pool.query(
-    `INSERT INTO whatsapp_groups (instance_id, group_jid, name, description, member_count)
-     VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (group_jid) DO UPDATE SET
+    `INSERT INTO whatsapp_groups (instance_id, group_jid, name, description, member_count, is_available, last_seen_at)
+     VALUES ($1, $2, $3, $4, $5, true, NOW())
+     ON CONFLICT (instance_id, group_jid) DO UPDATE SET
        name         = EXCLUDED.name,
        description  = EXCLUDED.description,
        member_count = EXCLUDED.member_count,
+       is_available = true,
+       last_seen_at = NOW(),
        updated_at   = NOW()
      RETURNING id, is_monitored`,
     [instanceId, jid, meta.subject ?? null, meta.desc ?? null, meta.participants?.length ?? 0],
@@ -56,10 +64,13 @@ export async function upsertGroup(
 
   // Only store individual members for monitored groups — no wasted storage
   if (is_monitored && meta.participants && meta.participants.length > 0) {
+    const activeMemberHashes: string[] = []
+
     for (const p of meta.participants) {
       const memberHash = hashJid(p.id)
+      activeMemberHashes.push(memberHash)
       const phone = phoneFromJid(p.id)
-      if (phone) await upsertContact(memberHash, phone, (p as { notify?: string }).notify ?? null)
+      if (phone) await upsertContact(instanceId, memberHash, phone, (p as { notify?: string }).notify ?? null)
       await pool.query(
         `INSERT INTO whatsapp_group_members (group_id, member_hash, role, is_active)
          VALUES ($1, $2, $3, true)
@@ -70,6 +81,14 @@ export async function upsertGroup(
         [groupId, memberHash, p.admin ?? 'member'],
       )
     }
+
+    await pool.query(
+      `UPDATE whatsapp_group_members
+       SET is_active = false, left_at = COALESCE(left_at, NOW()), updated_at = NOW()
+       WHERE group_id = $1
+         AND NOT (member_hash = ANY($2::text[]))`,
+      [groupId, activeMemberHashes],
+    )
   }
 
   return groupId

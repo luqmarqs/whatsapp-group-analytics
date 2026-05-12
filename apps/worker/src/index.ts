@@ -8,12 +8,50 @@ import { runAlerts } from './jobs/alerts'
 import { loadMonitoredGroups } from './utils/monitoring'
 
 const INSTANCE_NAME = process.env.INSTANCE_NAME ?? 'default'
+const RESYNC_DELAY_MS = Number(process.env.RESYNC_DELAY_MS ?? 1500)
+
+const resyncQueue: string[] = []
+const queuedResyncs = new Set<string>()
+let resyncRunning = false
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+function enqueueResync(groupJid: string) {
+  if (!groupJid || queuedResyncs.has(groupJid)) return
+
+  queuedResyncs.add(groupJid)
+  resyncQueue.push(groupJid)
+  console.log(`[resync] queued ${groupJid}; pending=${resyncQueue.length}`)
+  drainResyncQueue().catch((e) => console.error('[resync] queue error', e))
+}
+
+async function drainResyncQueue() {
+  if (resyncRunning) return
+
+  resyncRunning = true
+  try {
+    while (resyncQueue.length > 0) {
+      const groupJid = resyncQueue.shift()!
+      try {
+        await resyncGroupParticipants(groupJid)
+      } finally {
+        queuedResyncs.delete(groupJid)
+      }
+
+      if (resyncQueue.length > 0 && RESYNC_DELAY_MS > 0) {
+        await sleep(RESYNC_DELAY_MS)
+      }
+    }
+  } finally {
+    resyncRunning = false
+  }
+}
 
 async function runJobs() {
   const today = new Date().toISOString().slice(0, 10)
   console.log('[jobs] running metrics + alerts manually')
-  await runDailyMetrics(today)
-  await runAlerts()
+  await runDailyMetrics(today, INSTANCE_NAME)
+  await runAlerts(INSTANCE_NAME)
   console.log('[jobs] done')
 }
 
@@ -43,7 +81,7 @@ async function main() {
     }
     if (channel === `wa:resync:${INSTANCE_NAME}`) {
       // message = groupJid to resync
-      resyncGroupParticipants(message).catch((e) => console.error('[resync] error', e))
+      enqueueResync(message)
     }
   })
   await sub.subscribe('wa:jobs')
@@ -53,10 +91,10 @@ async function main() {
   await sub.subscribe(`wa:resync:${INSTANCE_NAME}`)
 
   cron.schedule('0 1 * * *', () => {
-    runDailyMetrics().catch((e) => console.error('[cron] metrics error', e))
+    runDailyMetrics(undefined, INSTANCE_NAME).catch((e) => console.error('[cron] metrics error', e))
   })
   cron.schedule('15 1 * * *', () => {
-    runAlerts().catch((e) => console.error('[cron] alerts error', e))
+    runAlerts(INSTANCE_NAME).catch((e) => console.error('[cron] alerts error', e))
   })
 
   await startWhatsApp()

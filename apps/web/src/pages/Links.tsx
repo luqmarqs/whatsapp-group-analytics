@@ -2,21 +2,26 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Link2, Search, ExternalLink } from 'lucide-react'
 import { api, Link as LinkType } from '../lib/api'
+import { useInstanceFilter } from '../contexts/InstanceFilterContext'
 
 function fmt(date: string) {
   return new Date(date).toLocaleDateString('pt-BR')
 }
 
 export default function Links() {
+  const { selectedInstanceId } = useInstanceFilter()
   const [links, setLinks]   = useState<LinkType[]>([])
   const [loading, setLoading] = useState(true)
   const [q, setQ]             = useState('')
 
   useEffect(() => {
     setLoading(true)
-    const params = q ? `?domain=${encodeURIComponent(q)}` : ''
-    api.get<LinkType[]>(`/whatsapp/links${params}`).then(setLinks).finally(() => setLoading(false))
-  }, [q])
+    const params = new URLSearchParams()
+    if (q) params.set('domain', q)
+    if (selectedInstanceId) params.set('instance_id', selectedInstanceId)
+    const qs = params.toString()
+    api.get<LinkType[]>(`/whatsapp/links${qs ? `?${qs}` : ''}`).then(setLinks).finally(() => setLoading(false))
+  }, [q, selectedInstanceId])
 
   return (
     <div className="space-y-5">

@@ -69,6 +69,7 @@ export interface Group {
   name: string
   member_count: number
   is_monitored: boolean
+  is_available: boolean
   last_message_at: string | null
   messages_24h: number
   silent_3d: boolean

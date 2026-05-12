@@ -10,6 +10,7 @@ const docker = new Docker({ socketPath: process.platform === 'win32' ? '//./pipe
 
 const WORKER_IMAGE   = process.env.WORKER_IMAGE   ?? 'whatsapp-group-analytics-worker'
 const DOCKER_NETWORK = process.env.DOCKER_NETWORK ?? 'whatsapp-group-analytics_backend'
+const MANAGED_CONTAINER_RE = /^wga-worker-[a-z0-9-]+$/
 
 function requireAdmin(request: any, reply: any) {
   const user = request.user as { role: string }
@@ -21,6 +22,7 @@ function requireAdmin(request: any, reply: any) {
 }
 
 async function getContainerStatus(containerName: string): Promise<'running' | 'stopped' | 'missing'> {
+  if (!MANAGED_CONTAINER_RE.test(containerName)) return 'missing'
   try {
     const container = docker.getContainer(containerName)
     const info = await container.inspect()
@@ -28,6 +30,12 @@ async function getContainerStatus(containerName: string): Promise<'running' | 's
   } catch {
     return 'missing'
   }
+}
+
+function assertManagedContainer(containerName: string, reply: any) {
+  if (MANAGED_CONTAINER_RE.test(containerName)) return true
+  reply.status(400).send({ error: 'Container is not managed by this app' })
+  return false
 }
 
 export default async function adminRoutes(fastify: FastifyInstance) {
@@ -57,7 +65,14 @@ export default async function adminRoutes(fastify: FastifyInstance) {
   // ─── Trigger cron ─────────────────────────────────────────────────────────
   fastify.post('/run-jobs', { preHandler: authenticate }, async (request, reply) => {
     if (!requireAdmin(request, reply)) return
-    await redis.publish('wa:jobs', 'run')
+    const requestedInstanceId = (request.query as { instance_id?: string }).instance_id
+    if (requestedInstanceId) {
+      const { rows } = await pool.query('SELECT name FROM whatsapp_instances WHERE id = $1', [requestedInstanceId])
+      if (!rows[0]) return reply.status(404).send({ error: 'Instância não encontrada' })
+      await redis.publish(`wa:jobs:${rows[0].name}`, 'run')
+    } else {
+      await redis.publish('wa:jobs', 'run')
+    }
     return { ok: true, message: 'Jobs triggered — resultados disponíveis em instantes.' }
   })
 
@@ -154,6 +169,12 @@ export default async function adminRoutes(fastify: FastifyInstance) {
     const { name, user_id } = parsed.data
     const ownerId = user_id ?? me.id
     const containerName = `wga-worker-${name}`
+    if (!MANAGED_CONTAINER_RE.test(containerName)) {
+      return reply.status(400).send({ error: 'Nome de instância inválido' })
+    }
+
+    const { rows: owner } = await pool.query('SELECT id FROM users WHERE id = $1', [ownerId])
+    if (!owner[0]) return reply.status(400).send({ error: 'Usuário da instância não encontrado' })
 
     // Check name uniqueness
     const { rows: existing } = await pool.query('SELECT id FROM whatsapp_instances WHERE name = $1', [name])
@@ -200,10 +221,13 @@ export default async function adminRoutes(fastify: FastifyInstance) {
     if (!requireAdmin(request, reply)) return
     const { id } = request.params as { id: string }
     const { rows } = await pool.query('SELECT container_name FROM whatsapp_instances WHERE id = $1', [id])
+    const containerName = rows[0]?.container_name
+    if (!containerName) return reply.status(404).send({ error: 'Instância não encontrada' })
+    if (!assertManagedContainer(containerName, reply)) return
     if (!rows[0]?.container_name) return reply.status(404).send({ error: 'Instância não encontrada' })
 
     try {
-      const container = docker.getContainer(rows[0].container_name)
+      const container = docker.getContainer(containerName)
       await container.stop()
       await pool.query('UPDATE whatsapp_instances SET is_running = false, status = $1 WHERE id = $2', ['disconnected', id])
     } catch (e: any) {
@@ -216,10 +240,13 @@ export default async function adminRoutes(fastify: FastifyInstance) {
     if (!requireAdmin(request, reply)) return
     const { id } = request.params as { id: string }
     const { rows } = await pool.query('SELECT container_name FROM whatsapp_instances WHERE id = $1', [id])
+    const containerName = rows[0]?.container_name
+    if (!containerName) return reply.status(404).send({ error: 'Instância não encontrada' })
+    if (!assertManagedContainer(containerName, reply)) return
     if (!rows[0]?.container_name) return reply.status(404).send({ error: 'Instância não encontrada' })
 
     try {
-      const container = docker.getContainer(rows[0].container_name)
+      const container = docker.getContainer(containerName)
       await container.start()
       await pool.query('UPDATE whatsapp_instances SET is_running = true WHERE id = $1', [id])
     } catch (e: any) {
@@ -232,6 +259,9 @@ export default async function adminRoutes(fastify: FastifyInstance) {
     if (!requireAdmin(request, reply)) return
     const { id } = request.params as { id: string }
     const { rows } = await pool.query('SELECT container_name FROM whatsapp_instances WHERE id = $1', [id])
+    const containerName = rows[0]?.container_name
+    if (!containerName) return reply.status(404).send({ error: 'Instância não encontrada' })
+    if (!assertManagedContainer(containerName, reply)) return
     if (!rows[0]) return reply.status(404).send({ error: 'Instância não encontrada' })
 
     if (rows[0].container_name) {

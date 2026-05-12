@@ -1,6 +1,6 @@
 import pool from '../db'
 
-export async function runDailyMetrics(date?: string) {
+export async function runDailyMetrics(date?: string, instanceName?: string) {
   const target = date ?? new Date(Date.now() - 86_400_000).toISOString().slice(0, 10)
   console.log(`[metrics] computing for ${target}`)
 
@@ -21,6 +21,7 @@ export async function runDailyMetrics(date?: string) {
       COALESCE(ev.join_count,  0) - COALESCE(ev.leave_count, 0),
       g.member_count
     FROM whatsapp_groups g
+    JOIN whatsapp_instances i ON i.id = g.instance_id
     LEFT JOIN whatsapp_messages m
       ON m.group_id = g.id AND DATE(m.timestamp AT TIME ZONE 'UTC') = $1::date
     LEFT JOIN (
@@ -32,6 +33,9 @@ export async function runDailyMetrics(date?: string) {
       WHERE DATE(timestamp AT TIME ZONE 'UTC') = $1::date
       GROUP BY group_id
     ) ev ON ev.group_id = g.id
+    WHERE g.is_monitored = true
+      AND g.is_available = true
+      AND ($2::text IS NULL OR i.name = $2)
     GROUP BY g.id, ev.join_count, ev.leave_count
     ON CONFLICT (group_id, date) DO UPDATE SET
       message_count        = EXCLUDED.message_count,
@@ -43,7 +47,7 @@ export async function runDailyMetrics(date?: string) {
       net_member_growth    = EXCLUDED.net_member_growth,
       member_count_eod     = EXCLUDED.member_count_eod,
       updated_at           = NOW()
-  `, [target])
+  `, [target, instanceName ?? null])
 
   console.log(`[metrics] done for ${target}`)
 }

@@ -54,20 +54,20 @@ function approximateSize(msg: WAMessage): number | null {
   return len != null ? Number(len) : null
 }
 
-export async function handleMessage(msg: WAMessage, groupJid: string) {
+export async function handleMessage(msg: WAMessage, groupJid: string, instanceId: string) {
   if (!isMonitored(groupJid)) return  // skip unmonitored groups — no DB/storage cost
 
   const messageId = msg.key.id
   if (!messageId) return
 
   // Redis deduplication — prevents duplicate saves on reconnect
-  const dedupKey = `msg:${messageId}`
+  const dedupKey = `msg:${instanceId}:${groupJid}:${messageId}`
   const fresh = await redis.set(dedupKey, '1', 'EX', 86_400, 'NX')
   if (!fresh) return
 
   const { rows } = await pool.query(
-    'SELECT id FROM whatsapp_groups WHERE group_jid = $1',
-    [groupJid],
+    'SELECT id FROM whatsapp_groups WHERE instance_id = $1 AND group_jid = $2',
+    [instanceId, groupJid],
   )
   if (!rows[0]) return
 
@@ -80,13 +80,13 @@ export async function handleMessage(msg: WAMessage, groupJid: string) {
   const senderPhone = phoneFromJid(senderJid)
   if (senderPhone) {
     pool.query(
-      `INSERT INTO whatsapp_contacts (member_hash, phone, name)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (member_hash) DO UPDATE SET
+      `INSERT INTO whatsapp_contacts (instance_id, member_hash, phone, name)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (instance_id, member_hash) DO UPDATE SET
          phone      = EXCLUDED.phone,
          name       = COALESCE(EXCLUDED.name, whatsapp_contacts.name),
          updated_at = NOW()`,
-      [senderHash, senderPhone, msg.pushName ?? null],
+      [instanceId, senderHash, senderPhone, msg.pushName ?? null],
     ).catch(() => { /* non-critical */ })
   }
   const msgType = getMessageType(msg)
@@ -103,7 +103,7 @@ export async function handleMessage(msg: WAMessage, groupJid: string) {
          (message_id, group_id, sender_hash, timestamp, message_type,
           has_link, has_media, approximate_size, message_body)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-       ON CONFLICT (message_id) DO NOTHING`,
+       ON CONFLICT (group_id, message_id) DO NOTHING`,
       [
         messageId,
         groupId,

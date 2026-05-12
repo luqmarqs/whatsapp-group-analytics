@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { Bell, CheckCircle, AlertTriangle, Info, Zap, VolumeX, TrendingDown, TrendingUp } from 'lucide-react'
 import Badge from '../components/Badge'
 import { api, Alert } from '../lib/api'
+import { useInstanceFilter } from '../contexts/InstanceFilterContext'
 
 const ALERT_INFO: Record<string, { label: string; desc: string; icon: React.ElementType }> = {
   silent_3d:       { label: 'Silêncio 3 dias',    desc: 'Sem mensagens por 3 dias',               icon: VolumeX },
@@ -23,17 +24,21 @@ function fmt(date: string) {
 }
 
 export default function Alerts() {
+  const { selectedInstanceId } = useInstanceFilter()
   const [alerts, setAlerts]         = useState<Alert[]>([])
   const [loading, setLoading]       = useState(true)
   const [unreadOnly, setUnreadOnly] = useState(false)
 
   const load = () => {
     setLoading(true)
-    const q = unreadOnly ? '?unread=true' : ''
-    api.get<Alert[]>(`/whatsapp/alerts${q}`).then(setAlerts).finally(() => setLoading(false))
+    const params = new URLSearchParams()
+    if (unreadOnly) params.set('unread', 'true')
+    if (selectedInstanceId) params.set('instance_id', selectedInstanceId)
+    const qs = params.toString()
+    api.get<Alert[]>(`/whatsapp/alerts${qs ? `?${qs}` : ''}`).then(setAlerts).finally(() => setLoading(false))
   }
 
-  useEffect(() => { load() }, [unreadOnly]) // eslint-disable-line
+  useEffect(() => { load() }, [unreadOnly, selectedInstanceId]) // eslint-disable-line
 
   const markRead = async (id: string) => {
     await api.patch(`/whatsapp/alerts/${id}/read`, {})

@@ -11,19 +11,21 @@ import {
 } from 'lucide-react'
 import KpiCard from '../components/KpiCard'
 import { api, Overview } from '../lib/api'
+import { useInstanceFilter } from '../contexts/InstanceFilterContext'
 
 export default function Dashboard() {
+  const { instanceQuery } = useInstanceFilter()
   const [data, setData] = useState<Overview | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   useEffect(() => {
     api
-      .get<Overview>('/whatsapp/overview')
+      .get<Overview>(`/whatsapp/overview${instanceQuery()}`)
       .then(setData)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
-  }, [])
+  }, [instanceQuery])
 
   if (loading) return <p className="text-gray-500">Carregando…</p>
   if (error)   return <p className="text-red-500">{error}</p>

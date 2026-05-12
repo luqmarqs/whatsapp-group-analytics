@@ -9,11 +9,12 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
   // ─── Instance status + QR (instância do usuário) ──────────────────────────
   fastify.get('/instance', { preHandler: authenticate }, async (request, reply) => {
     const user = request.user as { id: string; role: string }
+    const requestedId = (request.query as { instance_id?: string }).instance_id
     const { rows } = await pool.query(
       `SELECT status, jid, connected_at, name FROM whatsapp_instances
-       WHERE ($1 = 'admin' OR user_id = $2::uuid)
+       WHERE (($1 = 'admin' AND ($3::uuid IS NULL OR id = $3::uuid)) OR user_id = $2::uuid)
        ORDER BY created_at LIMIT 1`,
-      [user.role, user.id],
+      [user.role, user.id, requestedId ?? null],
     )
     if (!rows[0]) return reply.status(404).send({ error: 'no_instance' })
     const instance = rows[0]
@@ -26,11 +27,12 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
   // ─── Desconectar WhatsApp (user-initiated logout → limpa sessão → novo QR) ─
   fastify.post('/disconnect', { preHandler: authenticate }, async (request, reply) => {
     const user = request.user as { id: string; role: string }
+    const requestedId = (request.query as { instance_id?: string }).instance_id
     const { rows } = await pool.query(
       `SELECT name FROM whatsapp_instances
-       WHERE ($1 = 'admin' OR user_id = $2::uuid)
+       WHERE (($1 = 'admin' AND ($3::uuid IS NULL OR id = $3::uuid)) OR user_id = $2::uuid)
        ORDER BY created_at LIMIT 1`,
-      [user.role, user.id],
+      [user.role, user.id, requestedId ?? null],
     )
     if (!rows[0]) return reply.status(404).send({ error: 'Nenhuma instância encontrada' })
     await redis.publish(`wa:logout:${rows[0].name}`, 'logout')
@@ -61,33 +63,33 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
           SELECT DISTINCT group_id FROM whatsapp_messages
           WHERE timestamp >= NOW() - INTERVAL '7 days'
         ) m7 ON m7.group_id = g.id
-        WHERE TRUE ${scope.clause} AND g.is_monitored = true
+        WHERE TRUE ${scope.clause} AND g.is_monitored = true AND g.is_available = true
       `, scope.values),
       pool.query(`
         SELECT COUNT(*)::int AS count FROM whatsapp_messages m
         JOIN whatsapp_groups g ON g.id = m.group_id
-        WHERE m.timestamp >= NOW() - INTERVAL '1 day' ${scope.clause} AND g.is_monitored = true
+        WHERE m.timestamp >= NOW() - INTERVAL '1 day' ${scope.clause} AND g.is_monitored = true AND g.is_available = true
       `, scope.values),
       pool.query(`
         SELECT COUNT(*)::int AS count FROM whatsapp_links l
         JOIN whatsapp_groups g ON g.id = l.group_id
-        WHERE l.last_seen_at >= NOW() - INTERVAL '1 day' ${scope.clause} AND g.is_monitored = true
+        WHERE l.last_seen_at >= NOW() - INTERVAL '1 day' ${scope.clause} AND g.is_monitored = true AND g.is_available = true
       `, scope.values),
       pool.query(`
         SELECT COUNT(*)::int AS count FROM whatsapp_group_events e
         JOIN whatsapp_groups g ON g.id = e.group_id
-        WHERE e.event_type = 'join' AND e.timestamp >= NOW() - INTERVAL '7 days' ${scope.clause} AND g.is_monitored = true
+        WHERE e.event_type = 'join' AND e.timestamp >= NOW() - INTERVAL '7 days' ${scope.clause} AND g.is_monitored = true AND g.is_available = true
       `, scope.values),
       pool.query(`
         SELECT COUNT(*)::int AS count FROM whatsapp_group_events e
         JOIN whatsapp_groups g ON g.id = e.group_id
-        WHERE e.event_type = 'leave' AND e.timestamp >= NOW() - INTERVAL '7 days' ${scope.clause} AND g.is_monitored = true
+        WHERE e.event_type = 'leave' AND e.timestamp >= NOW() - INTERVAL '7 days' ${scope.clause} AND g.is_monitored = true AND g.is_available = true
       `, scope.values),
       pool.query(`
         SELECT COUNT(DISTINCT m.member_hash)::int AS count
         FROM whatsapp_group_members m
         JOIN whatsapp_groups g ON g.id = m.group_id
-        WHERE m.is_active = true ${scope.clause} AND g.is_monitored = true
+        WHERE m.is_active = true ${scope.clause} AND g.is_monitored = true AND g.is_available = true
       `, scope.values),
     ])
 
@@ -120,6 +122,7 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
         g.name,
         g.member_count,
         g.is_monitored,
+        g.is_available,
         g.created_at,
         g.updated_at,
         MAX(m.timestamp)                                                         AS last_message_at,
@@ -131,6 +134,7 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
       FROM whatsapp_groups g
       LEFT JOIN whatsapp_messages m ON m.group_id = g.id
       WHERE ($1::text IS NULL OR g.name ILIKE '%' || $1 || '%')
+        AND g.is_available = true
         ${monitoredClause}
         ${scope.clause}
       GROUP BY g.id
@@ -280,11 +284,13 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
         c.name,
         c.updated_at AS contact_updated_at
       FROM whatsapp_group_members m
-      LEFT JOIN whatsapp_contacts c ON c.member_hash = m.member_hash
+      JOIN whatsapp_groups g ON g.id = m.group_id
+      LEFT JOIN whatsapp_contacts c
+        ON c.instance_id = g.instance_id
+       AND c.member_hash = m.member_hash
       WHERE m.group_id = $1
         AND ($2::boolean IS NULL OR m.is_active = $2::boolean)
       ORDER BY m.is_active DESC, c.name ASC NULLS LAST
-      LIMIT 1000
     `, [id, active != null ? active === 'true' : null])
 
     return rows
@@ -348,7 +354,7 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
       FROM whatsapp_daily_group_metrics d
       JOIN whatsapp_groups g ON g.id = d.group_id
       WHERE d.date >= CURRENT_DATE - ($1 || ' days')::interval
-        ${scope.clause} AND g.is_monitored = true
+        ${scope.clause} AND g.is_monitored = true AND g.is_available = true
       GROUP BY d.date
       ORDER BY d.date ASC
     `, [days, ...scope.values])
@@ -368,7 +374,7 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
       FROM whatsapp_messages m
       JOIN whatsapp_groups g ON g.id = m.group_id
       WHERE m.timestamp >= NOW() - ($1 || ' days')::interval
-        ${scope.clause} AND g.is_monitored = true
+        ${scope.clause} AND g.is_monitored = true AND g.is_available = true
       GROUP BY hour
       ORDER BY hour
     `, [days, ...scope.values])
@@ -408,7 +414,7 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
       FROM whatsapp_groups g
       LEFT JOIN whatsapp_daily_group_metrics d
         ON d.group_id = g.id AND d.date >= CURRENT_DATE - ($1 || ' days')::interval
-      WHERE TRUE ${scope.clause} AND g.is_monitored = true
+      WHERE TRUE ${scope.clause} AND g.is_monitored = true AND g.is_available = true
       GROUP BY g.id
       ORDER BY messages_period DESC
       LIMIT 50
@@ -436,7 +442,7 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
       JOIN whatsapp_groups g ON g.id = l.group_id
       WHERE ($1::text IS NULL OR l.domain ILIKE '%' || $1 || '%')
         AND ($2::uuid IS NULL OR l.group_id = $2::uuid)
-        ${scope.clause} AND g.is_monitored = true
+        ${scope.clause} AND g.is_monitored = true AND g.is_available = true
       ORDER BY l.last_seen_at DESC
       LIMIT 200
     `, [domain ?? null, group_id ?? null, ...scope.values])
@@ -463,7 +469,7 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
       FROM whatsapp_alerts a
       JOIN whatsapp_groups g ON g.id = a.group_id
       WHERE ($1::boolean IS NULL OR a.is_read = NOT $1::boolean)
-        ${scope.clause} AND g.is_monitored = true
+        ${scope.clause} AND g.is_monitored = true AND g.is_available = true
       ORDER BY a.created_at DESC
       LIMIT 200
     `, [unread === 'true' ? true : null, ...scope.values])
@@ -516,6 +522,25 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
       const task = rows[0]
 
       if (group_ids && group_ids.length > 0) {
+        const user = request.user as { id: string; role: string }
+        const { rows: accessibleGroups } = user.role === 'admin'
+          ? await client.query(
+              `SELECT id FROM whatsapp_groups WHERE id = ANY($1::uuid[])`,
+              [group_ids],
+            )
+          : await client.query(
+              `SELECT g.id
+               FROM whatsapp_groups g
+               JOIN whatsapp_instances i ON i.id = g.instance_id
+               WHERE g.id = ANY($1::uuid[]) AND i.user_id = $2::uuid`,
+              [group_ids, user.id],
+            )
+        const accessibleIds = new Set(accessibleGroups.map((g: any) => g.id))
+        if (!group_ids.every((gid) => accessibleIds.has(gid))) {
+          await client.query('ROLLBACK')
+          return reply.status(403).send({ error: 'One or more groups are not accessible' })
+        }
+
         for (const gid of group_ids) {
           await client.query(
             `INSERT INTO whatsapp_group_task_status (task_id, group_id, status)
@@ -536,15 +561,26 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
 
   fastify.get('/tasks', { preHandler: authenticate }, async (request, reply) => {
     const user = request.user as { id: string; role: string }
+    const requestedInstanceId = (request.query as { instance_id?: string }).instance_id
 
     // For non-admins: only tasks that involve at least one of their groups
-    const { rows: tasks } = user.role === 'admin'
+    const { rows: tasks } = user.role === 'admin' && requestedInstanceId
       ? await pool.query(`
+          SELECT DISTINCT t.*, u.name AS created_by_name
+          FROM whatsapp_group_tasks t
+          JOIN users u ON u.id = t.created_by
+          JOIN whatsapp_group_task_status s ON s.task_id = t.id
+          JOIN whatsapp_groups g ON g.id = s.group_id
+          WHERE g.instance_id = $1::uuid
+          ORDER BY t.created_at DESC LIMIT 200`,
+          [requestedInstanceId])
+      : user.role === 'admin'
+        ? await pool.query(`
           SELECT t.*, u.name AS created_by_name
           FROM whatsapp_group_tasks t
           JOIN users u ON u.id = t.created_by
           ORDER BY t.created_at DESC LIMIT 200`)
-      : await pool.query(`
+        : await pool.query(`
           SELECT DISTINCT t.*, u.name AS created_by_name
           FROM whatsapp_group_tasks t
           JOIN users u ON u.id = t.created_by
@@ -559,14 +595,21 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
     if (taskIds.length === 0) return []
 
     // For statuses, also filter to user's accessible groups
-    const { rows: statuses } = user.role === 'admin'
+    const { rows: statuses } = user.role === 'admin' && requestedInstanceId
       ? await pool.query(`
+          SELECT s.*, g.name AS group_name
+          FROM whatsapp_group_task_status s
+          JOIN whatsapp_groups g ON g.id = s.group_id
+          WHERE s.task_id = ANY($1::uuid[]) AND g.instance_id = $2::uuid`,
+          [taskIds, requestedInstanceId])
+      : user.role === 'admin'
+        ? await pool.query(`
           SELECT s.*, g.name AS group_name
           FROM whatsapp_group_task_status s
           JOIN whatsapp_groups g ON g.id = s.group_id
           WHERE s.task_id = ANY($1::uuid[])`,
           [taskIds])
-      : await pool.query(`
+        : await pool.query(`
           SELECT s.*, g.name AS group_name
           FROM whatsapp_group_task_status s
           JOIN whatsapp_groups g ON g.id = s.group_id
@@ -595,6 +638,7 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
 
   fastify.patch('/tasks/:id', { preHandler: authenticate }, async (request, reply) => {
     const { id } = request.params as { id: string }
+    const user = request.user as { id: string; role: string }
     const parsed = taskPatchSchema.safeParse(request.body)
     if (!parsed.success) {
       return reply.status(400).send({ error: 'Invalid input', details: parsed.error.issues })
@@ -603,6 +647,23 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
     const { status, notes, group_id, title, description, due_date, priority } = parsed.data
 
     if (group_id) {
+      const access = user.role === 'admin'
+        ? await pool.query(
+            `SELECT s.id
+             FROM whatsapp_group_task_status s
+             WHERE s.task_id = $1 AND s.group_id = $2`,
+            [id, group_id],
+          )
+        : await pool.query(
+            `SELECT s.id
+             FROM whatsapp_group_task_status s
+             JOIN whatsapp_groups g ON g.id = s.group_id
+             JOIN whatsapp_instances i ON i.id = g.instance_id
+             WHERE s.task_id = $1 AND s.group_id = $2 AND i.user_id = $3::uuid`,
+            [id, group_id, user.id],
+          )
+      if (!access.rows[0]) return reply.status(404).send({ error: 'Task status not found' })
+
       const completed_at = status === 'done' ? new Date().toISOString() : null
       const { rows } = await pool.query(
         `UPDATE whatsapp_group_task_status
@@ -626,6 +687,19 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
     if (due_date    !== undefined) { fields.push(`due_date = $${idx++}`);    values.push(due_date) }
     if (priority    !== undefined) { fields.push(`priority = $${idx++}`);    values.push(priority) }
     if (fields.length === 0) return reply.status(400).send({ error: 'No fields to update' })
+
+    const taskAccess = user.role === 'admin'
+      ? await pool.query('SELECT id FROM whatsapp_group_tasks WHERE id = $1', [id])
+      : await pool.query(
+          `SELECT DISTINCT t.id
+           FROM whatsapp_group_tasks t
+           JOIN whatsapp_group_task_status s ON s.task_id = t.id
+           JOIN whatsapp_groups g ON g.id = s.group_id
+           JOIN whatsapp_instances i ON i.id = g.instance_id
+           WHERE t.id = $1 AND t.created_by = $2::uuid AND i.user_id = $2::uuid`,
+          [id, user.id],
+        )
+    if (!taskAccess.rows[0]) return reply.status(404).send({ error: 'Task not found' })
 
     fields.push(`updated_at = NOW()`)
     values.push(id)

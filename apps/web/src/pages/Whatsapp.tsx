@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import KpiCard from '../components/KpiCard'
 import { api, Overview } from '../lib/api'
+import { useInstanceFilter } from '../contexts/InstanceFilterContext'
 
 interface InstanceStatus {
   status: string
@@ -15,25 +16,27 @@ interface InstanceStatus {
 }
 
 export default function Whatsapp() {
+  const { selectedInstanceId } = useInstanceFilter()
   const [instance, setInstance]   = useState<InstanceStatus | null>(null)
   const [overview, setOverview]   = useState<Overview | null>(null)
   const [state, setState]         = useState<'loading' | 'no_instance' | 'waiting' | 'connected'>('loading')
   const [disconnecting, setDisconnecting] = useState(false)
 
   const load = useCallback(async () => {
+    const instanceParam = selectedInstanceId ? `?instance_id=${encodeURIComponent(selectedInstanceId)}` : ''
     try {
-      const inst = await api.get<InstanceStatus>('/whatsapp/instance')
+      const inst = await api.get<InstanceStatus>(`/whatsapp/instance${instanceParam}`)
       setInstance(inst)
       if (inst.status === 'connected') {
         setState('connected')
-        api.get<Overview>('/whatsapp/overview').then(setOverview).catch(() => {})
+        api.get<Overview>(`/whatsapp/overview${instanceParam}`).then(setOverview).catch(() => {})
       } else {
         setState('waiting')
       }
     } catch {
       setState('no_instance')
     }
-  }, [])
+  }, [selectedInstanceId])
 
   useEffect(() => { load() }, [load])
 
@@ -47,7 +50,7 @@ export default function Whatsapp() {
     if (!confirm('Desconectar o WhatsApp? Você precisará escanear um novo QR code para reconectar.')) return
     setDisconnecting(true)
     try {
-      await api.post('/whatsapp/disconnect', {})
+      await api.post(`/whatsapp/disconnect${selectedInstanceId ? `?instance_id=${encodeURIComponent(selectedInstanceId)}` : ''}`, {})
       setState('waiting')
       setInstance((prev) => prev ? { ...prev, status: 'disconnected', qr: null } : null)
       setTimeout(load, 3_000)

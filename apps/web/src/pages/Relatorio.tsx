@@ -12,6 +12,7 @@ import {
   api, Overview, Activity as ActivityType, TopGroup, Alert, Link as LinkType, PeakHour,
 } from '../lib/api'
 import Badge from '../components/Badge'
+import { useInstanceFilter } from '../contexts/InstanceFilterContext'
 
 interface InstanceStatus { status: string; qr: string | null }
 
@@ -65,6 +66,7 @@ function KpiCard({
 }
 
 export default function Relatorio() {
+  const { selectedInstanceId } = useInstanceFilter()
   const [overview, setOverview]     = useState<Overview | null>(null)
   const [activity, setActivity]     = useState<ActivityType[]>([])
   const [topGroups, setTopGroups]   = useState<TopGroup[]>([])
@@ -78,15 +80,21 @@ export default function Relatorio() {
 
   const load = useCallback(async () => {
     setLoading(true)
+    const withInstance = (path: string, params: Record<string, string> = {}) => {
+      const search = new URLSearchParams(params)
+      if (selectedInstanceId) search.set('instance_id', selectedInstanceId)
+      const qs = search.toString()
+      return qs ? `${path}?${qs}` : path
+    }
     try {
       const [ov, act, top, al, lk, ph, inst] = await Promise.allSettled([
-        api.get<Overview>('/whatsapp/overview'),
-        api.get<ActivityType[]>('/whatsapp/activity?days=30'),
-        api.get<TopGroup[]>('/whatsapp/top-groups?days=30'),
-        api.get<Alert[]>('/whatsapp/alerts'),
-        api.get<LinkType[]>('/whatsapp/links'),
-        api.get<PeakHour[]>('/whatsapp/peak-hours?days=7'),
-        api.get<InstanceStatus>('/whatsapp/instance'),
+        api.get<Overview>(withInstance('/whatsapp/overview')),
+        api.get<ActivityType[]>(withInstance('/whatsapp/activity', { days: '30' })),
+        api.get<TopGroup[]>(withInstance('/whatsapp/top-groups', { days: '30' })),
+        api.get<Alert[]>(withInstance('/whatsapp/alerts')),
+        api.get<LinkType[]>(withInstance('/whatsapp/links')),
+        api.get<PeakHour[]>(withInstance('/whatsapp/peak-hours', { days: '7' })),
+        api.get<InstanceStatus>(withInstance('/whatsapp/instance')),
       ])
       if (ov.status === 'fulfilled')       setOverview(ov.value)
       if (act.status === 'fulfilled')      setActivity(act.value)
@@ -96,14 +104,17 @@ export default function Relatorio() {
       if (ph.status === 'fulfilled')       setPeakHours(ph.value)
       if (inst.status === 'fulfilled')     setInstance(inst.value)
     } finally { setLoading(false) }
-  }, [])
+  }, [selectedInstanceId])
 
   useEffect(() => { load() }, [load])
 
   async function runJobs() {
     setRunning(true); setRunMsg('')
     try {
-      const res = await api.post<{ message: string }>('/admin/run-jobs', {})
+      const res = await api.post<{ message: string }>(
+        selectedInstanceId ? `/admin/run-jobs?instance_id=${encodeURIComponent(selectedInstanceId)}` : '/admin/run-jobs',
+        {},
+      )
       setRunMsg(res.message)
       setTimeout(() => { load(); setRunMsg('') }, 4_000)
     } catch (e: unknown) {
