@@ -28,8 +28,8 @@ function downloadCsv(groupName: string, members: Member[]) {
   const headers = ['Nome', 'Telefone', 'Identificador WhatsApp', 'Tipo ID', 'Papel', 'Status', 'Entrou em', 'Saiu em']
   const rows = members.map((m) => [
     m.name ?? '',
-    m.phone ?? '',
-    m.raw_jid ?? '',
+    m.phone ? `="${m.phone}"` : '',
+    m.raw_jid ? `="${m.raw_jid}"` : '',
     m.jid_server ?? '',
     m.role,
     m.is_active ? 'Ativo' : 'Inativo',
