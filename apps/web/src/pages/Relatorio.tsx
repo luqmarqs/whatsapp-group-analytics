@@ -146,6 +146,8 @@ function downloadMonitoredMembersCsv(members: MonitoredMember[]) {
   URL.revokeObjectURL(url)
 }
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
 function KpiCard({
   label, value, sub, icon: Icon, accent, trend: trendPct,
 }: {
@@ -251,7 +253,13 @@ export default function Relatorio() {
     setDownloadingMembers(true)
     try {
       const qs = selectedInstanceId ? `?instance_id=${encodeURIComponent(selectedInstanceId)}` : ''
-      const members = await api.get<MonitoredMember[]>(`/whatsapp/monitored-members${qs}`)
+      await api.post(`/whatsapp/monitored-members/resync${qs}`, {}).catch(() => null)
+      await sleep(3500)
+      let members = await api.get<MonitoredMember[]>(`/whatsapp/monitored-members${qs}`)
+      if (members.length === 0) {
+        await sleep(5000)
+        members = await api.get<MonitoredMember[]>(`/whatsapp/monitored-members${qs}`)
+      }
       downloadMonitoredMembersCsv(members)
     } catch (e: unknown) {
       alert(e instanceof Error ? e.message : 'Erro ao baixar contatos')

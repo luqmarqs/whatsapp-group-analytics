@@ -177,6 +177,23 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
     return rows
   })
 
+  fastify.post('/monitored-members/resync', { preHandler: authenticate }, async (request, reply) => {
+    const scope = await instanceScope(request as any, 1)
+
+    const { rows } = await pool.query(`
+      SELECT g.group_jid, i.name AS instance_name
+      FROM whatsapp_groups g
+      JOIN whatsapp_instances i ON i.id = g.instance_id
+      WHERE g.is_monitored = true
+        AND g.is_available = true
+        ${scope.clause}
+      ORDER BY g.name ASC NULLS LAST, g.group_jid ASC
+    `, scope.values)
+
+    await Promise.all(rows.map((r: any) => redis.publish(`wa:resync:${r.instance_name}`, r.group_jid)))
+    return { ok: true, queued: rows.length }
+  })
+
   fastify.get('/polls', { preHandler: authenticate }, async (request, reply) => {
     const query = request.query as { days?: string; group_id?: string }
     const days = Math.min(Math.max(parseInt(query.days ?? '30'), 1), 365)
@@ -430,6 +447,28 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
     `, [id, active != null ? active === 'true' : null])
 
     return rows
+  })
+
+  fastify.post('/groups/:id/members/resync', { preHandler: authenticate }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    const user = request.user as { id: string; role: string }
+    if (!await canAccessGroup(id, user.id, user.role)) {
+      return reply.status(404).send({ error: 'Group not found' })
+    }
+
+    const { rows } = await pool.query(
+      `SELECT g.group_jid, i.name AS instance_name
+       FROM whatsapp_groups g
+       JOIN whatsapp_instances i ON i.id = g.instance_id
+       WHERE g.id = $1
+         AND g.is_monitored = true
+         AND g.is_available = true`,
+      [id],
+    )
+    if (!rows[0]) return reply.status(404).send({ error: 'Grupo monitorado não encontrado' })
+
+    await redis.publish(`wa:resync:${rows[0].instance_name}`, rows[0].group_jid)
+    return { ok: true, queued: 1 }
   })
 
   // ─── Member evolution ─────────────────────────────────────────────────────

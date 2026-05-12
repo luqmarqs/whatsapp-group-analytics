@@ -4,6 +4,7 @@ import {
 } from 'lucide-react'
 import { api, AdminUser, Instance, InstanceQR } from '../lib/api'
 import Badge from '../components/Badge'
+import { useInstanceFilter } from '../contexts/InstanceFilterContext'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 function Tab({ label, icon: Icon, active, onClick }: {
@@ -189,6 +190,7 @@ function UsersTab() {
 
 // ── Instances tab ─────────────────────────────────────────────────────────────
 function InstancesTab() {
+  const { selectedInstanceId } = useInstanceFilter()
   const [instances, setInstances] = useState<Instance[]>([])
   const [users, setUsers]         = useState<AdminUser[]>([])
   const [qrMap, setQrMap]         = useState<Record<string, InstanceQR>>({})
@@ -202,9 +204,9 @@ function InstancesTab() {
       api.get<Instance[]>('/admin/instances'),
       api.get<AdminUser[]>('/admin/users'),
     ])
-    setInstances(list)
+    setInstances(selectedInstanceId ? list.filter((i) => i.id === selectedInstanceId) : list)
     setUsers(userList)
-  }, [])
+  }, [selectedInstanceId])
 
   useEffect(() => { load() }, [load])
 

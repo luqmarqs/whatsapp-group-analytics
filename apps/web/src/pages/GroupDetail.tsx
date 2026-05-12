@@ -49,6 +49,8 @@ function downloadCsv(groupName: string, members: Member[]) {
   URL.revokeObjectURL(url)
 }
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
 export default function GroupDetail() {
   const { id } = useParams<{ id: string }>()
   const [data, setData]           = useState<GD | null>(null)
@@ -76,7 +78,13 @@ export default function GroupDetail() {
     if (!data || loadingCsv) return
     setLoadingCsv(true)
     try {
-      const list = await api.get<Member[]>(`/whatsapp/groups/${id}/members`)
+      await api.post(`/whatsapp/groups/${id}/members/resync`, {}).catch(() => null)
+      await sleep(2500)
+      let list = await api.get<Member[]>(`/whatsapp/groups/${id}/members`)
+      if (list.length === 0) {
+        await sleep(3500)
+        list = await api.get<Member[]>(`/whatsapp/groups/${id}/members`)
+      }
       setMembers(list)
       downloadCsv(data.group.name ?? data.group.group_jid, list)
     } catch (e: unknown) {

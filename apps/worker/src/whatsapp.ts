@@ -21,6 +21,7 @@ import { loadMonitoredGroups } from './utils/monitoring'
 
 const SESSION_DIR   = process.env.SESSION_DIR   ?? path.join(process.cwd(), 'sessions')
 const INSTANCE_NAME = process.env.INSTANCE_NAME ?? 'default'
+const STARTUP_MEMBER_RESYNC_DELAY_MS = Number(process.env.STARTUP_MEMBER_RESYNC_DELAY_MS ?? 1500)
 
 let userInitiatedLogout = false
 let logoutFallbackTimer: NodeJS.Timeout | null = null
@@ -96,6 +97,36 @@ export async function resyncGroupParticipants(groupJid: string): Promise<void> {
     console.log(`[resync] ${meta.participants?.length ?? 0} participante(s) sincronizados para ${groupJid}`)
   } catch (err) {
     console.error('[resync] erro:', err)
+  }
+}
+
+async function resyncMonitoredGroupsMissingMembers() {
+  if (!instanceId) return
+
+  const { rows } = await pool.query(
+    `SELECT g.group_jid
+     FROM whatsapp_groups g
+     WHERE g.instance_id = $1
+       AND g.is_monitored = true
+       AND g.is_available = true
+       AND NOT EXISTS (
+         SELECT 1
+         FROM whatsapp_group_members m
+         WHERE m.group_id = g.id
+           AND m.is_active = true
+       )
+     ORDER BY g.name ASC NULLS LAST, g.group_jid ASC`,
+    [instanceId],
+  )
+
+  if (rows.length === 0) return
+  console.log(`[resync] ${rows.length} monitored group(s) missing members; syncing now`)
+
+  for (const row of rows) {
+    await resyncGroupParticipants(row.group_jid)
+    if (STARTUP_MEMBER_RESYNC_DELAY_MS > 0) {
+      await new Promise((resolve) => setTimeout(resolve, STARTUP_MEMBER_RESYNC_DELAY_MS))
+    }
   }
 }
 
@@ -191,6 +222,9 @@ export async function startWhatsApp() {
       await updateInstanceStatus(instanceId!, 'connected', jid)
       await syncGroups(sock!, instanceId!)
       await loadMonitoredGroups()
+      resyncMonitoredGroupsMissingMembers().catch((err) =>
+        console.error('[resync] startup member backfill error', err),
+      )
     }
   })
 
