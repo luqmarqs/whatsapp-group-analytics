@@ -156,12 +156,18 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
       'UPDATE whatsapp_groups SET is_monitored = $1, updated_at = NOW() WHERE id = $2',
       [is_monitored, id],
     )
-    // Notify worker to reload monitored set
     const { rows } = await pool.query(
-      'SELECT i.name FROM whatsapp_instances i JOIN whatsapp_groups g ON g.instance_id = i.id WHERE g.id = $1',
+      'SELECT i.name, g.group_jid FROM whatsapp_instances i JOIN whatsapp_groups g ON g.instance_id = i.id WHERE g.id = $1',
       [id],
     )
-    if (rows[0]) await redis.publish(`wa:monitoring:changed:${rows[0].name}`, 'reload')
+    if (rows[0]) {
+      await redis.publish(`wa:monitoring:changed:${rows[0].name}`, 'reload')
+      // When enabling monitoring, trigger a participant resync so members appear
+      // even in announcement groups where nobody sends messages
+      if (is_monitored) {
+        await redis.publish(`wa:resync:${rows[0].name}`, rows[0].group_jid)
+      }
+    }
     return { ok: true }
   })
 
@@ -186,7 +192,7 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
       user.role === 'admin' ? [group_ids] : [group_ids, user.id],
     )
 
-    const ids = accessible.map((r) => r.id)
+    const ids = accessible.map((r: any) => r.id)
     if (ids.length === 0) return { ok: true, updated: 0 }
 
     await pool.query(
@@ -194,9 +200,21 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
       [is_monitored, ids],
     )
 
-    // Notify affected workers
-    const instanceNames = [...new Set(accessible.map((r) => r.instance_name))]
+    // Notify workers to reload monitoring set
+    const instanceNames = [...new Set<string>(accessible.map((r: any) => r.instance_name))]
     await Promise.all(instanceNames.map((n) => redis.publish(`wa:monitoring:changed:${n}`, 'reload')))
+
+    // When enabling monitoring, trigger participant resync for each group
+    // so members appear even in announcement groups without messages
+    if (is_monitored) {
+      const { rows: jids } = await pool.query(
+        `SELECT g.group_jid, i.name AS instance_name
+         FROM whatsapp_groups g JOIN whatsapp_instances i ON i.id = g.instance_id
+         WHERE g.id = ANY($1::uuid[])`,
+        [ids],
+      )
+      await Promise.all(jids.map((r: any) => redis.publish(`wa:resync:${r.instance_name}`, r.group_jid)))
+    }
 
     return { ok: true, updated: ids.length }
   })

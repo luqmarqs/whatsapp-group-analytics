@@ -2,7 +2,7 @@ import 'dotenv/config'
 import cron from 'node-cron'
 import pool from './db'
 import redis from './redis'
-import { startWhatsApp, requestLogout } from './whatsapp'
+import { startWhatsApp, requestLogout, resyncGroupParticipants } from './whatsapp'
 import { runDailyMetrics } from './jobs/metrics'
 import { runAlerts } from './jobs/alerts'
 import { loadMonitoredGroups } from './utils/monitoring'
@@ -41,11 +41,16 @@ async function main() {
     if (channel === `wa:logout:${INSTANCE_NAME}`) {
       requestLogout()
     }
+    if (channel === `wa:resync:${INSTANCE_NAME}`) {
+      // message = groupJid to resync
+      resyncGroupParticipants(message).catch((e) => console.error('[resync] error', e))
+    }
   })
   await sub.subscribe('wa:jobs')
   await sub.subscribe(`wa:jobs:${INSTANCE_NAME}`)
   await sub.subscribe(`wa:monitoring:changed:${INSTANCE_NAME}`)
   await sub.subscribe(`wa:logout:${INSTANCE_NAME}`)
+  await sub.subscribe(`wa:resync:${INSTANCE_NAME}`)
 
   cron.schedule('0 1 * * *', () => {
     runDailyMetrics().catch((e) => console.error('[cron] metrics error', e))

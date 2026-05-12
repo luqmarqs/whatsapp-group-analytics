@@ -19,12 +19,30 @@ import { handleParticipantUpdate } from './handlers/members'
 const SESSION_DIR   = process.env.SESSION_DIR   ?? path.join(process.cwd(), 'sessions')
 const INSTANCE_NAME = process.env.INSTANCE_NAME ?? 'default'
 
-// Set to true when logout is user-initiated — clears session and shows new QR
 let userInitiatedLogout = false
 
 export function requestLogout() {
   userInitiatedLogout = true
   sock?.logout().catch(() => {})
+}
+
+/**
+ * Fetches the current participant list for a group directly from WhatsApp
+ * and upserts all contacts. Works even for announcement groups where no
+ * messages are sent — covers members who have never spoken.
+ */
+export async function resyncGroupParticipants(groupJid: string): Promise<void> {
+  if (!sock || !instanceId) {
+    console.log(`[resync] skipped — not connected (${groupJid})`)
+    return
+  }
+  try {
+    const meta = await sock.groupMetadata(groupJid)
+    await upsertGroup(groupJid, meta, instanceId)
+    console.log(`[resync] ${meta.participants?.length ?? 0} participante(s) sincronizados para ${groupJid}`)
+  } catch (err) {
+    console.error('[resync] erro:', err)
+  }
 }
 
 let sock: WASocket | null = null
