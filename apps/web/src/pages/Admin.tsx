@@ -152,39 +152,50 @@ function UsersTab() {
 // ── Instances tab ─────────────────────────────────────────────────────────────
 function InstancesTab() {
   const [instances, setInstances] = useState<Instance[]>([])
-  const [qrMap, setQrMap] = useState<Record<string, InstanceQR>>({})
-  const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ name: '' })
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
+  const [users, setUsers]         = useState<AdminUser[]>([])
+  const [qrMap, setQrMap]         = useState<Record<string, InstanceQR>>({})
+  const [showForm, setShowForm]   = useState(false)
+  const [form, setForm]           = useState({ name: '', user_id: '' })
+  const [saving, setSaving]       = useState(false)
+  const [error, setError]         = useState('')
 
   const load = useCallback(async () => {
-    const list = await api.get<Instance[]>('/admin/instances')
+    const [list, userList] = await Promise.all([
+      api.get<Instance[]>('/admin/instances'),
+      api.get<AdminUser[]>('/admin/users'),
+    ])
     setInstances(list)
+    setUsers(userList)
   }, [])
 
   useEffect(() => { load() }, [load])
 
-  // Poll QR for disconnected instances
+  // Poll status + QR every 5s for non-connected instances
   useEffect(() => {
-    const disconnected = instances.filter((i) => i.status !== 'connected')
-    if (disconnected.length === 0) return
+    const pending = instances.filter((i) => i.status !== 'connected')
+    if (pending.length === 0) return
     const interval = setInterval(async () => {
-      for (const inst of disconnected) {
+      let changed = false
+      for (const inst of pending) {
         try {
           const qr = await api.get<InstanceQR>(`/admin/instances/${inst.id}/qr`)
           setQrMap((prev) => ({ ...prev, [inst.id]: qr }))
+          if (qr.status === 'connected') changed = true
         } catch { /* ignore */ }
       }
+      if (changed) load() // refresh full list when any instance connects
     }, 5_000)
     return () => clearInterval(interval)
-  }, [instances])
+  }, [instances, load])
 
   async function create() {
     setSaving(true); setError('')
     try {
-      await api.post('/admin/instances', form)
-      setShowForm(false); setForm({ name: '' }); load()
+      await api.post('/admin/instances', {
+        name: form.name,
+        ...(form.user_id ? { user_id: form.user_id } : {}),
+      })
+      setShowForm(false); setForm({ name: '', user_id: '' }); load()
     } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Erro') }
     finally { setSaving(false) }
   }
@@ -220,13 +231,23 @@ function InstancesTab() {
       {showForm && (
         <div className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm space-y-3">
           <h3 className="text-sm font-semibold text-gray-700">Criar instância</h3>
-          <p className="text-xs text-gray-400">Use apenas letras minúsculas, números e hífens. Ex: <code>conta-sp</code></p>
+          <p className="text-xs text-gray-400">Nome: apenas letras minúsculas, números e hífens. Ex: <code>conta-sp</code></p>
           {error && <p className="text-xs text-red-500">{error}</p>}
-          <div className="flex gap-3">
-            <input className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm"
+          <div className="grid grid-cols-2 gap-3">
+            <input className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
               placeholder="nome-da-instancia"
               value={form.name}
-              onChange={(e) => setForm({ name: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') })} />
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') }))} />
+            <select className="border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700"
+              value={form.user_id}
+              onChange={(e) => setForm((f) => ({ ...f, user_id: e.target.value }))}>
+              <option value="">— Atribuir ao meu usuário (admin) —</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex gap-2 justify-end">
             <button onClick={() => setShowForm(false)} className="text-sm text-gray-500 px-3 py-1.5">Cancelar</button>
             <button onClick={create} disabled={saving || !form.name}
               className="text-sm bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-4 py-1.5 rounded-lg">

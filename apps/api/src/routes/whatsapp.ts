@@ -477,6 +477,7 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
   // ─── Links ────────────────────────────────────────────────────────────────
   fastify.get('/links', { preHandler: authenticate }, async (request, reply) => {
     const { domain, group_id } = request.query as { domain?: string; group_id?: string }
+    const scope = await instanceScope(request as any, 3)
 
     const { rows } = await pool.query(`
       SELECT
@@ -492,9 +493,10 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
       JOIN whatsapp_groups g ON g.id = l.group_id
       WHERE ($1::text IS NULL OR l.domain ILIKE '%' || $1 || '%')
         AND ($2::uuid IS NULL OR l.group_id = $2::uuid)
+        ${scope.clause}
       ORDER BY l.last_seen_at DESC
       LIMIT 200
-    `, [domain ?? null, group_id ?? null])
+    `, [domain ?? null, group_id ?? null, ...scope.values])
 
     return rows
   })
@@ -502,6 +504,7 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
   // ─── Alerts ───────────────────────────────────────────────────────────────
   fastify.get('/alerts', { preHandler: authenticate }, async (request, reply) => {
     const { unread } = request.query as { unread?: string }
+    const scope = await instanceScope(request as any, 2)
 
     const { rows } = await pool.query(`
       SELECT
@@ -517,9 +520,10 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
       FROM whatsapp_alerts a
       JOIN whatsapp_groups g ON g.id = a.group_id
       WHERE ($1::boolean IS NULL OR a.is_read = NOT $1::boolean)
+        ${scope.clause}
       ORDER BY a.created_at DESC
       LIMIT 200
-    `, [unread === 'true' ? true : null])
+    `, [unread === 'true' ? true : null, ...scope.values])
 
     return rows
   })
@@ -587,24 +591,45 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
     }
   })
 
-  fastify.get('/tasks', { preHandler: authenticate }, async (_req, reply) => {
-    const { rows: tasks } = await pool.query(`
-      SELECT t.*, u.name AS created_by_name
-      FROM whatsapp_group_tasks t
-      JOIN users u ON u.id = t.created_by
-      ORDER BY t.created_at DESC
-      LIMIT 200
-    `)
+  fastify.get('/tasks', { preHandler: authenticate }, async (request, reply) => {
+    const user = request.user as { id: string; role: string }
 
-    const taskIds = tasks.map((t) => t.id)
+    // For non-admins: only tasks that involve at least one of their groups
+    const { rows: tasks } = user.role === 'admin'
+      ? await pool.query(`
+          SELECT t.*, u.name AS created_by_name
+          FROM whatsapp_group_tasks t
+          JOIN users u ON u.id = t.created_by
+          ORDER BY t.created_at DESC LIMIT 200`)
+      : await pool.query(`
+          SELECT DISTINCT t.*, u.name AS created_by_name
+          FROM whatsapp_group_tasks t
+          JOIN users u ON u.id = t.created_by
+          JOIN whatsapp_group_task_status s ON s.task_id = t.id
+          JOIN whatsapp_groups g ON g.id = s.group_id
+          JOIN whatsapp_instances i ON i.id = g.instance_id
+          WHERE i.user_id = $1
+          ORDER BY t.created_at DESC LIMIT 200`,
+          [user.id])
+
+    const taskIds = tasks.map((t: any) => t.id)
     if (taskIds.length === 0) return []
 
-    const { rows: statuses } = await pool.query(`
-      SELECT s.*, g.name AS group_name
-      FROM whatsapp_group_task_status s
-      JOIN whatsapp_groups g ON g.id = s.group_id
-      WHERE s.task_id = ANY($1::uuid[])
-    `, [taskIds])
+    // For statuses, also filter to user's accessible groups
+    const { rows: statuses } = user.role === 'admin'
+      ? await pool.query(`
+          SELECT s.*, g.name AS group_name
+          FROM whatsapp_group_task_status s
+          JOIN whatsapp_groups g ON g.id = s.group_id
+          WHERE s.task_id = ANY($1::uuid[])`,
+          [taskIds])
+      : await pool.query(`
+          SELECT s.*, g.name AS group_name
+          FROM whatsapp_group_task_status s
+          JOIN whatsapp_groups g ON g.id = s.group_id
+          JOIN whatsapp_instances i ON i.id = g.instance_id
+          WHERE s.task_id = ANY($1::uuid[]) AND i.user_id = $2`,
+          [taskIds, user.id])
 
     const statusMap: Record<string, typeof statuses> = {}
     for (const s of statuses) {
