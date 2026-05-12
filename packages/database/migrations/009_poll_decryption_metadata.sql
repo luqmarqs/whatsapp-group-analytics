@@ -1,0 +1,3 @@
+ALTER TABLE whatsapp_polls
+  ADD COLUMN IF NOT EXISTS creator_jid VARCHAR(255),
+  ADD COLUMN IF NOT EXISTS message_secret BYTEA;

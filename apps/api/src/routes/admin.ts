@@ -1,16 +1,16 @@
 import { FastifyInstance } from 'fastify'
 import bcrypt from 'bcryptjs'
-import Docker from 'dockerode'
 import { z } from 'zod'
 import pool from '../db'
 import redis from '../redis'
 import { authenticate } from '../middleware/authenticate'
-
-const docker = new Docker({ socketPath: process.platform === 'win32' ? '//./pipe/docker_engine' : '/var/run/docker.sock' })
-
-const WORKER_IMAGE   = process.env.WORKER_IMAGE   ?? 'whatsapp-group-analytics-worker'
-const DOCKER_NETWORK = process.env.DOCKER_NETWORK ?? 'whatsapp-group-analytics_backend'
-const MANAGED_CONTAINER_RE = /^wga-worker-[a-z0-9-]+$/
+import {
+  docker,
+  ensureWorkerContainer,
+  getWorkerContainerStatus,
+  isManagedWorkerContainer,
+  removeWorkerContainer,
+} from '../services/workerContainers'
 
 function requireAdmin(request: any, reply: any) {
   const user = request.user as { role: string }
@@ -22,18 +22,11 @@ function requireAdmin(request: any, reply: any) {
 }
 
 async function getContainerStatus(containerName: string): Promise<'running' | 'stopped' | 'missing'> {
-  if (!MANAGED_CONTAINER_RE.test(containerName)) return 'missing'
-  try {
-    const container = docker.getContainer(containerName)
-    const info = await container.inspect()
-    return info.State.Running ? 'running' : 'stopped'
-  } catch {
-    return 'missing'
-  }
+  return getWorkerContainerStatus(containerName)
 }
 
 function assertManagedContainer(containerName: string, reply: any) {
-  if (MANAGED_CONTAINER_RE.test(containerName)) return true
+  if (isManagedWorkerContainer(containerName)) return true
   reply.status(400).send({ error: 'Container is not managed by this app' })
   return false
 }
@@ -169,7 +162,7 @@ export default async function adminRoutes(fastify: FastifyInstance) {
     const { name, user_id } = parsed.data
     const ownerId = user_id ?? me.id
     const containerName = `wga-worker-${name}`
-    if (!MANAGED_CONTAINER_RE.test(containerName)) {
+    if (!isManagedWorkerContainer(containerName)) {
       return reply.status(400).send({ error: 'Nome de instância inválido' })
     }
 
@@ -188,27 +181,8 @@ export default async function adminRoutes(fastify: FastifyInstance) {
     )
     const instanceId = rows[0].id
 
-    // Start Docker container
     try {
-      const container = await docker.createContainer({
-        Image: WORKER_IMAGE,
-        name: containerName,
-        Env: [
-          `DATABASE_URL=${process.env.DATABASE_URL}`,
-          `REDIS_URL=${process.env.REDIS_URL}`,
-          `INSTANCE_NAME=${name}`,
-          `SESSION_DIR=/app/sessions`,
-          `NODE_ENV=production`,
-          `STORE_MESSAGE_BODY=${process.env.STORE_MESSAGE_BODY ?? 'false'}`,
-        ],
-        HostConfig: {
-          NetworkMode: DOCKER_NETWORK,
-          Mounts: [{ Type: 'volume', Source: `wga-sessions-${name}`, Target: '/app/sessions' }],
-          RestartPolicy: { Name: 'unless-stopped' },
-        },
-      })
-      await container.start()
-      await pool.query('UPDATE whatsapp_instances SET is_running = true WHERE id = $1', [instanceId])
+      await ensureWorkerContainer({ id: instanceId, name, container_name: containerName, is_running: false }, true)
     } catch (e: any) {
       await pool.query('DELETE FROM whatsapp_instances WHERE id = $1', [instanceId])
       return reply.status(500).send({ error: `Falha ao iniciar container: ${e.message}` })
@@ -246,8 +220,7 @@ export default async function adminRoutes(fastify: FastifyInstance) {
     if (!rows[0]?.container_name) return reply.status(404).send({ error: 'Instância não encontrada' })
 
     try {
-      const container = docker.getContainer(containerName)
-      await container.start()
+      await ensureWorkerContainer({ id, name: containerName.replace(/^wga-worker-/, ''), container_name: containerName, is_running: true }, true)
       await pool.query('UPDATE whatsapp_instances SET is_running = true WHERE id = $1', [id])
     } catch (e: any) {
       return reply.status(500).send({ error: e.message })
@@ -264,13 +237,7 @@ export default async function adminRoutes(fastify: FastifyInstance) {
     if (!assertManagedContainer(containerName, reply)) return
     if (!rows[0]) return reply.status(404).send({ error: 'Instância não encontrada' })
 
-    if (rows[0].container_name) {
-      try {
-        const container = docker.getContainer(rows[0].container_name)
-        await container.stop().catch(() => {})
-        await container.remove()
-      } catch { /* container already gone */ }
-    }
+    if (rows[0].container_name) await removeWorkerContainer(rows[0].container_name).catch(() => {})
     await pool.query('DELETE FROM whatsapp_instances WHERE id = $1', [id])
     return { ok: true }
   })

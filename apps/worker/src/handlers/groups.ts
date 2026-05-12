@@ -17,6 +17,25 @@ async function upsertContact(instanceId: string, memberHash: string, rawJid: str
   )
 }
 
+async function upsertContactAlias(
+  instanceId: string,
+  aliasJid: string | null | undefined,
+  contactJid: string,
+) {
+  if (!aliasJid || aliasJid === contactJid) return
+
+  await pool.query(
+    `INSERT INTO whatsapp_contact_aliases (instance_id, alias_hash, contact_hash, raw_jid, jid_server)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (instance_id, alias_hash) DO UPDATE SET
+       contact_hash = EXCLUDED.contact_hash,
+       raw_jid      = COALESCE(EXCLUDED.raw_jid, whatsapp_contact_aliases.raw_jid),
+       jid_server   = COALESCE(EXCLUDED.jid_server, whatsapp_contact_aliases.jid_server),
+       updated_at   = NOW()`,
+    [instanceId, hashJid(aliasJid), hashJid(contactJid), aliasJid, serverFromJid(aliasJid)],
+  )
+}
+
 export async function syncGroups(sock: WASocket, instanceId: string) {
   console.log('[groups] syncing all participating groups…')
 
@@ -82,6 +101,7 @@ export async function upsertGroup(
       if (phone) contactsWithPhone += 1
       else contactsWithoutPhone += 1
       await upsertContact(instanceId, memberHash, actualJid, (p as { notify?: string }).notify ?? null)
+      await upsertContactAlias(instanceId, p.id, actualJid)
       await pool.query(
         `INSERT INTO whatsapp_group_members (group_id, member_hash, role, is_active)
          VALUES ($1, $2, $3, true)

@@ -4,7 +4,8 @@ import { ArrowLeft, Users, MessageSquare, Link2, Download, RefreshCw, ListChecks
 import ActivityChart from '../components/ActivityChart'
 import MemberEvolutionChart from '../components/MemberEvolutionChart'
 import Badge from '../components/Badge'
-import { api, GroupDetail as GD, MemberEvolution, Poll } from '../lib/api'
+import { api, GroupDetail as GD, MemberEvolution, Poll, PollVote } from '../lib/api'
+import { downloadPollVotesCsv } from '../lib/pollVotesCsv'
 
 interface Member {
   id: string
@@ -55,6 +56,7 @@ export default function GroupDetail() {
   const [polls, setPolls]         = useState<Poll[]>([])
   const [members, setMembers]     = useState<Member[]>([])
   const [loadingCsv, setLoadingCsv] = useState(false)
+  const [loadingPollVotesId, setLoadingPollVotesId] = useState<string | null>(null)
   const [loading, setLoading]     = useState(true)
   const [error, setError]         = useState('')
 
@@ -80,6 +82,19 @@ export default function GroupDetail() {
     } catch (e: unknown) {
       alert(e instanceof Error ? e.message : 'Erro ao baixar membros')
     } finally { setLoadingCsv(false) }
+  }
+
+  async function handleDownloadPollVotes(poll: Poll) {
+    if (loadingPollVotesId) return
+    setLoadingPollVotesId(poll.id)
+    try {
+      const votes = await api.get<PollVote[]>(`/whatsapp/polls/${poll.id}/votes`)
+      downloadPollVotesCsv(poll, votes)
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : 'Erro ao baixar votos da enquete')
+    } finally {
+      setLoadingPollVotesId(null)
+    }
   }
 
   if (loading) return (
@@ -178,9 +193,22 @@ export default function GroupDetail() {
                 <div key={poll.id} className="border-b border-gray-100 last:border-0 pb-4 last:pb-0">
                   <div className="flex items-start justify-between gap-4 mb-2">
                     <p className="text-sm font-semibold text-gray-800">{poll.title}</p>
-                    <div className="text-right shrink-0">
-                      <p className="text-xs font-semibold text-gray-700">{poll.total_voters.toLocaleString('pt-BR')} votantes</p>
-                      <p className="text-[11px] text-gray-400">{new Date(poll.created_at_whatsapp).toLocaleDateString('pt-BR')}</p>
+                    <div className="flex items-start gap-2 shrink-0">
+                      <div className="text-right">
+                        <p className="text-xs font-semibold text-gray-700">{poll.total_voters.toLocaleString('pt-BR')} votantes</p>
+                        <p className="text-[11px] text-gray-400">{new Date(poll.created_at_whatsapp).toLocaleDateString('pt-BR')}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadPollVotes(poll)}
+                        disabled={poll.total_votes === 0 || loadingPollVotesId === poll.id}
+                        title="Baixar lista completa de votos"
+                        className="p-1.5 border border-gray-200 hover:bg-gray-50 disabled:opacity-50 text-gray-500 rounded-lg transition-colors"
+                      >
+                        {loadingPollVotesId === poll.id
+                          ? <RefreshCw size={13} className="animate-spin" />
+                          : <Download size={13} />}
+                      </button>
                     </div>
                   </div>
                   <div className="space-y-1.5">

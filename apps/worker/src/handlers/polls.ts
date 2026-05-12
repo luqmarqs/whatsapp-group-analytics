@@ -1,5 +1,5 @@
 import { createHash } from 'crypto'
-import { proto } from '@whiskeysockets/baileys'
+import { decryptPollVote, getKeyAuthor, jidNormalizedUser, proto } from '@whiskeysockets/baileys'
 import pool from '../db'
 import { hashJid, phoneFromJid, serverFromJid } from '../utils/hash'
 import { isMonitored } from '../utils/monitoring'
@@ -51,6 +51,14 @@ function timestampFromMillis(value: unknown) {
   return new Date(millis)
 }
 
+function bufferFrom(value: Uint8Array | null | undefined): Buffer | null {
+  return value ? Buffer.from(value) : null
+}
+
+function pollMessageSecret(msg: WAMessage): Buffer | null {
+  return bufferFrom(msg.messageSecret ?? msg.message?.messageContextInfo?.messageSecret)
+}
+
 async function upsertContact(instanceId: string, jid: string | null | undefined, name?: string | null) {
   if (!jid) return
   await pool.query(
@@ -94,10 +102,12 @@ export async function handlePollCreation(msg: WAMessage, groupJid: string, insta
 
   const { rows } = await pool.query(
     `INSERT INTO whatsapp_polls
-       (instance_id, group_id, message_id, creator_hash, title, selectable_options_count,
-        poll_type, poll_content_type, created_at_whatsapp, raw_payload)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       (instance_id, group_id, message_id, creator_hash, creator_jid, message_secret,
+        title, selectable_options_count, poll_type, poll_content_type, created_at_whatsapp, raw_payload)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
      ON CONFLICT (instance_id, group_id, message_id) DO UPDATE SET
+       creator_jid              = COALESCE(EXCLUDED.creator_jid, whatsapp_polls.creator_jid),
+       message_secret           = COALESCE(EXCLUDED.message_secret, whatsapp_polls.message_secret),
        title                    = EXCLUDED.title,
        selectable_options_count = EXCLUDED.selectable_options_count,
        poll_type                = EXCLUDED.poll_type,
@@ -110,6 +120,8 @@ export async function handlePollCreation(msg: WAMessage, groupJid: string, insta
       groupId,
       messageId,
       creatorJid ? hashJid(creatorJid) : null,
+      creatorJid,
+      pollMessageSecret(msg),
       title,
       creation.selectableOptionsCount ?? null,
       pollType,
@@ -143,6 +155,52 @@ export async function handlePollCreation(msg: WAMessage, groupJid: string, insta
   }
 
   console.log(`[poll] captured poll "${title}" with ${options.length} option(s)`)
+}
+
+export async function handleRawPollUpdate(msg: WAMessage, instanceId: string, meId?: string) {
+  const rawUpdate = msg.message?.pollUpdateMessage
+  const pollKey = rawUpdate?.pollCreationMessageKey
+  if (!rawUpdate?.vote || !pollKey?.remoteJid || !pollKey.id) return
+
+  const groupJid = pollKey.remoteJid
+  if (!isMonitored(groupJid)) return
+
+  const groupId = await groupIdFor(instanceId, groupJid)
+  if (!groupId) return
+
+  const { rows } = await pool.query(
+    `SELECT id, creator_jid, message_secret
+     FROM whatsapp_polls
+     WHERE instance_id = $1 AND group_id = $2 AND message_id = $3`,
+    [instanceId, groupId, pollKey.id],
+  )
+  const poll = rows[0] as { id: string; creator_jid: string | null; message_secret: Buffer | null } | undefined
+  if (!poll?.message_secret) {
+    console.log(`[poll] vote skipped - missing poll secret (${pollKey.id})`)
+    return
+  }
+
+  const normalizedMeId = meId ? jidNormalizedUser(meId) : undefined
+  const pollCreatorJid = poll.creator_jid ?? getKeyAuthor(pollKey, normalizedMeId)
+  const voterJid = getKeyAuthor(msg.key, normalizedMeId)
+  if (!pollCreatorJid || !voterJid) return
+
+  const vote = decryptPollVote(rawUpdate.vote, {
+    pollCreatorJid,
+    pollMsgId: pollKey.id,
+    pollEncKey: poll.message_secret,
+    voterJid,
+  })
+
+  await handlePollUpdates(
+    pollKey,
+    [{
+      pollUpdateMessageKey: msg.key,
+      vote,
+      senderTimestampMs: rawUpdate.senderTimestampMs ?? msg.messageTimestamp,
+    }],
+    instanceId,
+  )
 }
 
 export async function handlePollUpdates(

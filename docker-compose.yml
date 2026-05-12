@@ -86,6 +86,7 @@ services:
       - backend
 
   worker:
+    image: ${WORKER_IMAGE:-whatsapp-group-analytics-worker}
     build:
       context: ./apps/worker
       dockerfile: Dockerfile

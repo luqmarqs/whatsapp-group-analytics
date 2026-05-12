@@ -253,6 +253,8 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
         p.title,
         g.name AS group_name,
         g.group_jid,
+        o.id AS option_id,
+        o.option_index,
         o.option_text,
         v.voted_at,
         c.name,
@@ -263,9 +265,12 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
       JOIN whatsapp_polls p ON p.id = v.poll_id
       JOIN whatsapp_groups g ON g.id = p.group_id
       JOIN whatsapp_poll_options o ON o.id = v.option_id
+      LEFT JOIN whatsapp_contact_aliases ca
+        ON ca.instance_id = p.instance_id
+       AND ca.alias_hash = v.voter_hash
       LEFT JOIN whatsapp_contacts c
         ON c.instance_id = p.instance_id
-       AND c.member_hash = v.voter_hash
+       AND c.member_hash = COALESCE(ca.contact_hash, v.voter_hash)
       WHERE p.id = $1::uuid
         ${scope.clause}
       ORDER BY o.option_index ASC, c.name ASC NULLS LAST, c.phone ASC NULLS LAST

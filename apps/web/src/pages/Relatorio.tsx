@@ -10,10 +10,11 @@ import {
   Tooltip, ResponsiveContainer, Legend, Cell,
 } from 'recharts'
 import {
-  api, Overview, Activity as ActivityType, TopGroup, Alert, Link as LinkType, PeakHour, Poll,
+  api, Overview, Activity as ActivityType, TopGroup, Alert, Link as LinkType, PeakHour, Poll, PollVote,
 } from '../lib/api'
 import Badge from '../components/Badge'
 import { useInstanceFilter } from '../contexts/InstanceFilterContext'
+import { downloadPollVotesCsv } from '../lib/pollVotesCsv'
 
 interface InstanceStatus { status: string; qr: string | null }
 interface MonitoredMember {
@@ -196,6 +197,7 @@ export default function Relatorio() {
   const [loading, setLoading]       = useState(true)
   const [running, setRunning]       = useState(false)
   const [downloadingMembers, setDownloadingMembers] = useState(false)
+  const [loadingPollVotesId, setLoadingPollVotesId] = useState<string | null>(null)
   const [runMsg, setRunMsg]         = useState('')
 
   const load = useCallback(async () => {
@@ -255,6 +257,20 @@ export default function Relatorio() {
       alert(e instanceof Error ? e.message : 'Erro ao baixar contatos')
     } finally {
       setDownloadingMembers(false)
+    }
+  }
+
+  async function downloadPollVotes(poll: Poll) {
+    if (loadingPollVotesId) return
+    setLoadingPollVotesId(poll.id)
+    try {
+      const qs = selectedInstanceId ? `?instance_id=${encodeURIComponent(selectedInstanceId)}` : ''
+      const votes = await api.get<PollVote[]>(`/whatsapp/polls/${poll.id}/votes${qs}`)
+      downloadPollVotesCsv(poll, votes)
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : 'Erro ao baixar votos da enquete')
+    } finally {
+      setLoadingPollVotesId(null)
     }
   }
 
@@ -318,7 +334,7 @@ export default function Relatorio() {
             className="flex items-center gap-1.5 px-3 py-2 border border-gray-200 hover:bg-gray-50 disabled:opacity-50 text-gray-600 text-xs font-medium rounded-lg transition-colors shadow-sm"
           >
             <Download size={13} />
-            Baixar grupos CSV
+            Exportar resumo dos grupos
           </button>
           <button
             onClick={downloadAllMonitoredMembers}
@@ -326,7 +342,7 @@ export default function Relatorio() {
             className="flex items-center gap-1.5 px-3 py-2 border border-gray-200 hover:bg-gray-50 disabled:opacity-50 text-gray-600 text-xs font-medium rounded-lg transition-colors shadow-sm"
           >
             {downloadingMembers ? <RefreshCw size={13} className="animate-spin" /> : <Download size={13} />}
-            Baixar contatos CSV
+            Exportar membros dos grupos
           </button>
           <button onClick={runJobs} disabled={running}
             className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-colors shadow-sm">
@@ -456,9 +472,22 @@ export default function Relatorio() {
                         {poll.group_name ?? poll.group_jid}
                       </Link>
                     </div>
-                    <div className="text-right shrink-0">
-                      <p className="text-xs font-semibold text-gray-700">{num(poll.total_voters)} votantes</p>
-                      <p className="text-[11px] text-gray-400">{new Date(poll.created_at_whatsapp).toLocaleDateString('pt-BR')}</p>
+                    <div className="flex items-start gap-2 shrink-0">
+                      <div className="text-right">
+                        <p className="text-xs font-semibold text-gray-700">{num(poll.total_voters)} votantes</p>
+                        <p className="text-[11px] text-gray-400">{new Date(poll.created_at_whatsapp).toLocaleDateString('pt-BR')}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => downloadPollVotes(poll)}
+                        disabled={poll.total_votes === 0 || loadingPollVotesId === poll.id}
+                        title="Baixar lista completa de votos"
+                        className="p-1.5 border border-gray-200 hover:bg-gray-50 disabled:opacity-50 text-gray-500 rounded-lg transition-colors"
+                      >
+                        {loadingPollVotesId === poll.id
+                          ? <RefreshCw size={13} className="animate-spin" />
+                          : <Download size={13} />}
+                      </button>
                     </div>
                   </div>
                   <div className="space-y-1.5">

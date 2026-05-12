@@ -2,6 +2,7 @@ import makeWASocket, {
   DisconnectReason,
   fetchLatestBaileysVersion,
   isJidGroup,
+  proto,
   useMultiFileAuthState,
   WASocket,
 } from '@whiskeysockets/baileys'
@@ -15,7 +16,7 @@ import redis from './redis'
 import { syncGroups, upsertGroup } from './handlers/groups'
 import { handleMessage } from './handlers/messages'
 import { handleParticipantUpdate } from './handlers/members'
-import { handlePollCreation, handlePollUpdates } from './handlers/polls'
+import { handlePollCreation, handlePollUpdates, handleRawPollUpdate } from './handlers/polls'
 import { loadMonitoredGroups } from './utils/monitoring'
 
 const SESSION_DIR   = process.env.SESSION_DIR   ?? path.join(process.cwd(), 'sessions')
@@ -101,6 +102,16 @@ export async function resyncGroupParticipants(groupJid: string): Promise<void> {
 let sock: WASocket | null = null
 let instanceId: string | null = null
 
+function hasPollPayload(msg: proto.IWebMessageInfo) {
+  return Boolean(
+    msg.pollUpdates?.length ||
+    msg.message?.pollUpdateMessage ||
+    msg.message?.pollCreationMessage ||
+    msg.message?.pollCreationMessageV2 ||
+    msg.message?.pollCreationMessageV3,
+  )
+}
+
 async function getOrCreateInstance(): Promise<string> {
   const { rows } = await pool.query(
     `INSERT INTO whatsapp_instances (name, status)
@@ -185,11 +196,10 @@ export async function startWhatsApp() {
 
   // Incoming messages
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
-    if (type !== 'notify') return
-
     for (const msg of messages) {
       const jid = msg.key.remoteJid
       if (!jid || !isJidGroup(jid)) continue
+      if (type !== 'notify' && !hasPollPayload(msg)) continue
 
       await handlePollCreation(msg, jid, instanceId!).catch((err) =>
         console.error('[wa] poll creation handler error', err),
@@ -197,6 +207,10 @@ export async function startWhatsApp() {
       await handlePollUpdates(msg.key, msg.pollUpdates, instanceId!).catch((err) =>
         console.error('[wa] poll update handler error', err),
       )
+      await handleRawPollUpdate(msg, instanceId!, sock?.user?.id).catch((err) =>
+        console.error('[wa] raw poll update handler error', err),
+      )
+      if (type !== 'notify') continue
       if (msg.key.fromMe) continue
 
       await handleMessage(msg, jid, instanceId!).catch((err) =>

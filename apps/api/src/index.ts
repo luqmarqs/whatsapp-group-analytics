@@ -9,6 +9,7 @@ import healthRoutes from './routes/health'
 import authRoutes from './routes/auth'
 import adminRoutes from './routes/admin'
 import whatsappRoutes from './routes/whatsapp'
+import { reconcileManagedWorkersOnStartup } from './services/workerContainers'
 
 const fastify = Fastify({
   logger: {
@@ -54,6 +55,9 @@ async function main() {
 
   const port = parseInt(process.env.PORT ?? '3001')
   await fastify.listen({ port, host: '0.0.0.0' })
+  reconcileManagedWorkersOnStartup().catch((err) => {
+    fastify.log.error({ err }, 'failed to reconcile managed workers')
+  })
 }
 
 process.on('SIGTERM', async () => {

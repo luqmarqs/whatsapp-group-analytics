@@ -151,6 +151,21 @@ export interface Poll {
   options: PollOption[]
 }
 
+export interface PollVote {
+  poll_id: string
+  title: string
+  group_name: string | null
+  group_jid: string
+  option_id: string
+  option_index: number
+  option_text: string
+  voted_at: string
+  name: string | null
+  phone: string | null
+  raw_jid: string | null
+  jid_server: string | null
+}
+
 export interface Link {
   id: string
   url_hash: string
