@@ -59,7 +59,7 @@ export async function upsertGroup(
     for (const p of meta.participants) {
       const memberHash = hashJid(p.id)
       const phone = phoneFromJid(p.id)
-      await upsertContact(memberHash, phone, (p as { notify?: string }).notify ?? null)
+      if (phone) await upsertContact(memberHash, phone, (p as { notify?: string }).notify ?? null)
       await pool.query(
         `INSERT INTO whatsapp_group_members (group_id, member_hash, role, is_active)
          VALUES ($1, $2, $3, true)

@@ -76,8 +76,9 @@ export async function handleMessage(msg: WAMessage, groupJid: string) {
   const senderHash = hashJid(senderJid)
   const timestamp = new Date((msg.messageTimestamp as number) * 1000)
 
-  // Update contact with phone and latest pushName (non-blocking)
-  if (senderJid) {
+  // Update contact with phone and latest pushName (non-blocking, only for real user JIDs)
+  const senderPhone = phoneFromJid(senderJid)
+  if (senderPhone) {
     pool.query(
       `INSERT INTO whatsapp_contacts (member_hash, phone, name)
        VALUES ($1, $2, $3)
@@ -85,7 +86,7 @@ export async function handleMessage(msg: WAMessage, groupJid: string) {
          phone      = EXCLUDED.phone,
          name       = COALESCE(EXCLUDED.name, whatsapp_contacts.name),
          updated_at = NOW()`,
-      [senderHash, phoneFromJid(senderJid), msg.pushName ?? null],
+      [senderHash, senderPhone, msg.pushName ?? null],
     ).catch(() => { /* non-critical */ })
   }
   const msgType = getMessageType(msg)

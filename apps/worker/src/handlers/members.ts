@@ -36,7 +36,8 @@ export async function handleParticipantUpdate(
 
   for (const participantJid of participants) {
     const memberHash = hashJid(participantJid)
-    await upsertContact(memberHash, phoneFromJid(participantJid))
+    const phone = phoneFromJid(participantJid)
+    if (phone) await upsertContact(memberHash, phone)
 
     // Deduplicate via Redis (1h TTL per event)
     const dedupKey = `event:${groupId}:${memberHash}:${eventType}:${Math.floor(Date.now() / 3_600_000)}`

@@ -10,7 +10,14 @@ export function hashJid(jid: string): string {
   return sha256(bare)
 }
 
-export function phoneFromJid(jid: string): string {
-  // Examples: 5511999999999@s.whatsapp.net or 5511999999999:2@s.whatsapp.net (multi-device)
-  return jid.replace(/@.+$/, '').replace(/:\d+$/, '')
+/**
+ * Extracts the E.164 phone number from a WhatsApp user JID.
+ * Returns null for non-user JIDs (@g.us groups, @lid anonymous IDs,
+ * @broadcast, etc.) — these must not be stored as phone numbers.
+ */
+export function phoneFromJid(jid: string): string | null {
+  if (!jid.includes('@s.whatsapp.net')) return null
+  const bare = jid.replace(/@.+$/, '').replace(/:\d+$/, '') // strip @… and :device
+  if (!/^\d{7,15}$/.test(bare)) return null                 // sanity: only digits, 7-15 chars
+  return bare
 }
