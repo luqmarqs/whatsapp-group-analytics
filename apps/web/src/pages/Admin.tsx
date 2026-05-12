@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import {
-  Users, Server, Plus, Trash2, Play, Square, RefreshCw, Eye, EyeOff, Shield,
+  Users, Server, Plus, Trash2, Play, Square, RefreshCw, Eye, EyeOff, Shield, Smartphone,
 } from 'lucide-react'
 import { api, AdminUser, Instance, InstanceQR } from '../lib/api'
 import Badge from '../components/Badge'
@@ -25,15 +25,40 @@ function Tab({ label, icon: Icon, active, onClick }: {
 
 // ── Users tab ─────────────────────────────────────────────────────────────────
 function UsersTab() {
-  const [users, setUsers] = useState<AdminUser[]>([])
+  const [users, setUsers]       = useState<AdminUser[]>([])
+  const [instances, setInstances] = useState<Instance[]>([])
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ email: '', name: '', password: '', role: 'viewer' as 'admin' | 'viewer' })
-  const [showPwd, setShowPwd] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
+  const [form, setForm]         = useState({ email: '', name: '', password: '', role: 'viewer' as 'admin' | 'viewer' })
+  const [showPwd, setShowPwd]   = useState(false)
+  const [saving, setSaving]     = useState(false)
+  const [error, setError]       = useState('')
+  const [creating, setCreating] = useState<string | null>(null) // user_id being created instance for
 
-  const load = useCallback(() => api.get<AdminUser[]>('/admin/users').then(setUsers), [])
+  const load = useCallback(async () => {
+    const [u, i] = await Promise.all([
+      api.get<AdminUser[]>('/admin/users'),
+      api.get<Instance[]>('/admin/instances'),
+    ])
+    setUsers(u); setInstances(i)
+  }, [])
   useEffect(() => { load() }, [load])
+
+  function hasInstance(userId: string) {
+    return instances.some((i) => i.user_email && users.find((u) => u.id === userId)?.email === i.user_email)
+  }
+
+  async function createInstance(user: AdminUser) {
+    if (!confirm(`Criar instância WhatsApp para ${user.name}?`)) return
+    setCreating(user.id)
+    const slug = user.email.split('@')[0].toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 20)
+    const name = `user-${slug}-${user.id.slice(0, 6)}`
+    try {
+      await api.post('/admin/instances', { name, user_id: user.id })
+      load()
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : 'Erro ao criar instância')
+    } finally { setCreating(null) }
+  }
 
   async function create() {
     setSaving(true); setError('')
@@ -134,7 +159,20 @@ function UsersTab() {
                 <td className="px-4 py-3 text-gray-400 text-xs">
                   {new Date(u.created_at).toLocaleDateString('pt-BR')}
                 </td>
-                <td className="px-4 py-3 text-right">
+                <td className="px-4 py-3 text-right flex items-center justify-end gap-2">
+                  {!hasInstance(u.id) && (
+                    <button
+                      onClick={() => createInstance(u)}
+                      disabled={creating === u.id}
+                      title="Criar instância WhatsApp para este usuário"
+                      className="text-xs flex items-center gap-1 text-indigo-500 hover:text-indigo-700 disabled:opacity-40"
+                    >
+                      {creating === u.id
+                        ? <RefreshCw size={12} className="animate-spin" />
+                        : <Smartphone size={12} />}
+                      Criar instância
+                    </button>
+                  )}
                   <button onClick={() => remove(u.id, u.name)}
                     className="text-gray-300 hover:text-red-500 transition-colors">
                     <Trash2 size={14} />

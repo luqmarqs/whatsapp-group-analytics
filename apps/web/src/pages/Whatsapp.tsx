@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import {
   Users, MessageSquare, Link2, UserPlus, UserMinus, Activity, VolumeX, AlertTriangle,
-  Smartphone, LogOut, RefreshCw,
+  Smartphone, RefreshCw,
 } from 'lucide-react'
 import KpiCard from '../components/KpiCard'
 import { api, Overview } from '../lib/api'
@@ -14,148 +14,92 @@ interface InstanceStatus {
   qr: string | null
 }
 
-type PageState = 'loading' | 'no_instance' | 'connecting' | 'waiting_qr' | 'connected'
-
 export default function Whatsapp() {
   const [instance, setInstance] = useState<InstanceStatus | null>(null)
   const [overview, setOverview] = useState<Overview | null>(null)
-  const [pageState, setPageState] = useState<PageState>('loading')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
+  const [state, setState]       = useState<'loading' | 'no_instance' | 'waiting' | 'connected'>('loading')
 
-  const loadInstance = useCallback(async () => {
+  const load = useCallback(async () => {
     try {
       const inst = await api.get<InstanceStatus>('/whatsapp/instance')
       setInstance(inst)
       if (inst.status === 'connected') {
-        setPageState('connected')
-        const ov = await api.get<Overview>('/whatsapp/overview')
-        setOverview(ov)
+        setState('connected')
+        api.get<Overview>('/whatsapp/overview').then(setOverview).catch(() => {})
       } else {
-        setPageState(inst.qr ? 'waiting_qr' : 'connecting')
+        setState('waiting')
       }
     } catch {
-      setPageState('no_instance')
+      setState('no_instance')
     }
   }, [])
 
-  useEffect(() => { loadInstance() }, [loadInstance])
+  useEffect(() => { load() }, [load])
 
+  // Poll enquanto aguarda conexão ou QR
   useEffect(() => {
-    if (pageState !== 'waiting_qr' && pageState !== 'connecting') return
-    const interval = setInterval(loadInstance, 5_000)
+    if (state !== 'waiting') return
+    const interval = setInterval(load, 5_000)
     return () => clearInterval(interval)
-  }, [pageState, loadInstance])
+  }, [state, load])
 
-  async function connect() {
-    setBusy(true); setError('')
-    try {
-      await api.post('/whatsapp/connect', {})
-      setPageState('connecting')
-      setTimeout(loadInstance, 4_000)
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Erro ao conectar')
-    } finally { setBusy(false) }
-  }
+  if (state === 'loading') return (
+    <div className="flex items-center justify-center h-64">
+      <RefreshCw size={20} className="animate-spin text-gray-400" />
+    </div>
+  )
 
-  async function disconnect() {
-    if (!confirm('Desconectar o WhatsApp? O container será removido e você precisará escanear o QR novamente.')) return
-    setBusy(true)
-    try {
-      await api.delete('/whatsapp/connect')
-      setInstance(null); setOverview(null); setPageState('no_instance')
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Erro ao desconectar')
-    } finally { setBusy(false) }
-  }
+  if (state === 'no_instance') return (
+    <div className="space-y-4">
+      <h1 className="text-xl font-bold text-gray-900">WhatsApp</h1>
+      <div className="bg-white rounded-xl border border-gray-200 p-8 shadow-sm flex flex-col items-center gap-4 max-w-md mx-auto">
+        <div className="p-4 bg-gray-50 rounded-full"><Smartphone size={28} className="text-gray-400" /></div>
+        <div className="text-center">
+          <h2 className="font-semibold text-gray-700 mb-1">Nenhuma instância configurada</h2>
+          <p className="text-sm text-gray-500">O administrador precisa criar uma instância para a sua conta.</p>
+        </div>
+      </div>
+    </div>
+  )
 
-  if (pageState === 'loading') return <p className="text-gray-500">Carregando…</p>
-
-  if (pageState === 'no_instance') {
-    return (
-      <div className="space-y-6">
-        <h1 className="text-xl font-bold text-gray-800">WhatsApp — Conectar</h1>
-        <div className="bg-white rounded-xl border border-gray-200 p-8 shadow-sm flex flex-col items-center gap-5 max-w-md mx-auto">
-          <div className="p-4 bg-green-50 rounded-full">
-            <Smartphone size={32} className="text-green-500" />
-          </div>
-          <div className="text-center">
-            <h2 className="font-semibold text-gray-800 mb-1">Nenhuma conta conectada</h2>
-            <p className="text-sm text-gray-500">
-              Clique em Conectar para iniciar sua instância WhatsApp.<br />
-              Você receberá um QR code para escanear com o celular.
+  if (state === 'waiting') return (
+    <div className="space-y-4">
+      <h1 className="text-xl font-bold text-gray-900">WhatsApp — Conectar</h1>
+      <div className="bg-white rounded-xl border border-gray-200 p-8 shadow-sm flex flex-col items-center gap-5 max-w-md mx-auto">
+        {instance?.qr ? (
+          <>
+            <img src={instance.qr} alt="QR code WhatsApp" className="w-56 h-56 border border-gray-200 rounded-xl" />
+            <div className="text-center space-y-1">
+              <p className="text-sm font-medium text-gray-700">Abra o WhatsApp no celular</p>
+              <p className="text-xs text-gray-500">
+                Dispositivos conectados → Conectar dispositivo → escaneie o código
+              </p>
+              <p className="text-xs text-gray-400">O QR expira em 2 min e atualiza automaticamente.</p>
+            </div>
+          </>
+        ) : (
+          <div className="flex flex-col items-center gap-3">
+            <RefreshCw size={24} className="text-indigo-400 animate-spin" />
+            <p className="text-sm text-gray-500 text-center">
+              Aguardando QR code… pode levar alguns segundos.
             </p>
           </div>
-          {error && <p className="text-xs text-red-500">{error}</p>}
-          <button onClick={connect} disabled={busy}
-            className="flex items-center gap-2 px-5 py-2.5 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors">
-            {busy ? <RefreshCw size={15} className="animate-spin" /> : <Smartphone size={15} />}
-            {busy ? 'Iniciando…' : 'Conectar WhatsApp'}
-          </button>
-        </div>
+        )}
       </div>
-    )
-  }
-
-  if (pageState === 'connecting') {
-    return (
-      <div className="space-y-6">
-        <h1 className="text-xl font-bold text-gray-800">WhatsApp — Aguardando QR</h1>
-        <div className="bg-white rounded-xl border border-gray-200 p-8 shadow-sm flex flex-col items-center gap-4 max-w-md mx-auto">
-          <RefreshCw size={28} className="text-indigo-500 animate-spin" />
-          <p className="text-sm text-gray-500 text-center">
-            Container iniciando… o QR code aparecerá em instantes.<br />
-            <span className="text-xs text-gray-400">Esta página atualiza automaticamente.</span>
-          </p>
-          <button onClick={disconnect} disabled={busy}
-            className="text-xs text-gray-400 hover:text-red-500 transition-colors flex items-center gap-1">
-            <LogOut size={11} /> Cancelar e remover
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  if (pageState === 'waiting_qr') {
-    return (
-      <div className="space-y-6">
-        <h1 className="text-xl font-bold text-gray-800">WhatsApp — Escanear QR</h1>
-        <div className="bg-white rounded-xl border border-gray-200 p-8 shadow-sm flex flex-col items-center gap-5 max-w-md mx-auto">
-          {instance?.qr
-            ? <img src={instance.qr} alt="QR code" className="w-56 h-56 border border-gray-200 rounded-xl" />
-            : <p className="text-sm text-gray-400">Aguardando geração do QR…</p>
-          }
-          <div className="text-center space-y-1">
-            <p className="text-sm font-medium text-gray-700">Abra o WhatsApp no celular</p>
-            <p className="text-xs text-gray-500">Dispositivos conectados → Conectar dispositivo → escaneie o código</p>
-            <p className="text-xs text-gray-400">O QR expira em 2 minutos e atualiza automaticamente.</p>
-          </div>
-          <button onClick={disconnect} disabled={busy}
-            className="text-xs text-gray-400 hover:text-red-500 transition-colors flex items-center gap-1">
-            <LogOut size={11} /> Cancelar e remover instância
-          </button>
-        </div>
-      </div>
-    )
-  }
+    </div>
+  )
 
   // connected
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-gray-800">Visão Geral — WhatsApp</h1>
-          {instance?.jid && (
-            <p className="text-xs text-gray-400 mt-0.5">
-              Conectado como {instance.jid.replace(/:.*@/, '@')}
-              {instance.connected_at && ` · desde ${new Date(instance.connected_at).toLocaleString('pt-BR')}`}
-            </p>
-          )}
-        </div>
-        <button onClick={disconnect} disabled={busy}
-          className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-red-500 transition-colors">
-          <LogOut size={12} /> Desconectar
-        </button>
+      <div>
+        <h1 className="text-xl font-bold text-gray-900">Visão Geral — WhatsApp</h1>
+        {instance?.jid && (
+          <p className="text-xs text-gray-400 mt-0.5">
+            Conectado como {instance.jid.replace(/:.*@/, '@')}
+            {instance.connected_at && ` · desde ${new Date(instance.connected_at).toLocaleString('pt-BR')}`}
+          </p>
+        )}
       </div>
 
       {overview && (
@@ -173,7 +117,7 @@ export default function Whatsapp() {
 
       <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
         <p className="text-sm text-gray-500">
-          Dados capturados automaticamente pelo worker. Métricas diárias são calculadas às 01h00 UTC.
+          Dados capturados automaticamente. Métricas diárias são calculadas às 01h00 UTC.
         </p>
       </div>
     </div>
